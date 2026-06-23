@@ -7,354 +7,385 @@ import io
 import colorsys
 import math
 
+DB_PATH = 'game_history.db'
+
 class CalendarBot(commands.Bot):
-    def add_commands(self):
-        @self.command(name='calendar')
-        async def show_calendar(ctx):
-            """ゲームプレイカレンダーを画像として表示"""
-            try:
-                sessions = self.get_game_sessions(ctx.author.id)
-                
-                if not sessions:
-                    await ctx.send("プレイ記録が見つかりませんでした。")
-                    return
-                
-                image = self.generate_calendar_image(sessions)
-                
-                with io.BytesIO() as image_binary:
-                    image.save(image_binary, 'PNG')
-                    image_binary.seek(0)
-                    
-                    await ctx.send(
-                        f"{ctx.author.name}の週間ゲームプレイカレンダー",
-                        file=discord.File(fp=image_binary, filename='calendar.png')
-                    )
-                    
-            except Exception as e:
-                await ctx.send(f"カレンダーの生成中にエラーが発生しました: {str(e)}")
-                raise e
+
+    # ──────────────────────────────────────────────
+    # 定数・設定
+    # ──────────────────────────────────────────────
+    THEME = {
+        'bg':          (15,  17,  26),   # #0F111A ダーク背景
+        'panel':       (22,  25,  37),   # #161925 カード背景
+        'grid':        (40,  44,  60),   # グリッド線
+        'text':        (220, 225, 240),  # メインテキスト
+        'subtext':     (120, 130, 160),  # サブテキスト（時間軸）
+        'weekend_sat': (80,  160, 240),  # 土曜：ブルー
+        'weekend_sun': (240, 90,  130),  # 日曜：ピンク
+        'accent':      (100, 180, 255),  # アクセント
+        'shadow':      (0,   0,   0,  60),
+    }
+
+    LAYOUT = {
+        'width':          1280,
+        'header_h':       70,    # タイトルエリア高さ
+        'day_header_h':   50,    # 曜日ヘッダー高さ
+        'time_col_w':     65,    # 時間軸の幅
+        'right_pad':      20,
+        'cell_h_per_min': 1.0,   # 1分=1px（24h = 1440px）
+        'legend_item_w':  220,
+        'legend_pad_top': 50,
+        'legend_pad_bot': 30,
+        'legend_item_h':  36,
+        'legend_row_gap': 10,
+        'color_box':      20,
+    }
 
     def __init__(self):
         intents = discord.Intents.all()
         super().__init__(command_prefix='!', intents=intents)
-        
-        # モダンなカラーパレット
-        self.base_colors = {
-            'background': (248, 250, 252),  # より明るい背景色
-            'grid': (203, 213, 225),        # よりソフトなグリッド線
-            'text': (51, 65, 85),           # より柔らかいテキスト色
-            'accent': (59, 130, 246)        # アクセントカラー
-        }
-        
-        # 影のエフェクト用の設定
-        self.shadow_color = (0, 0, 0, 30)   
-        self.shadow_offset = 3
+        self._add_commands()
 
-        # レイアウトの基本パラメータ
-        self.legend_params = {
-            'item_width': 200,        # 各ゲームアイテムの幅
-            'padding_top': 60,        # 凡例上部のパディング（タイトル用）
-            'padding_bottom': 30,     # 凡例下部のパディング
-            'item_height': 35,        # 各アイテムの高さ
-            'row_spacing': 15,        # 行間のスペース
-            'color_box_size': 25,     # カラーボックスのサイズ
-            'text_offset_x': 35,      # テキストの横方向オフセット
-            'text_offset_y': 4,       # テキストの縦方向オフセット
-        }
+    # ──────────────────────────────────────────────
+    # コマンド登録
+    # ──────────────────────────────────────────────
+    def _add_commands(self):
 
-        self.add_commands()
+        @self.command(name='calendar')
+        async def show_calendar(ctx, offset: int = 0):
+            """
+            ゲームプレイカレンダーを画像として表示
 
-    def calculate_legend_dimensions(self, game_count, width, margin):
-        """凡例の寸法を計算"""
-        # 利用可能な幅を計算
-        available_width = width - margin * 2 - 40
-        # 1行に表示できるアイテム数を計算
-        items_per_row = max(1, available_width // self.legend_params['item_width'])
-        # 必要な行数を計算
-        rows = math.ceil(game_count / items_per_row)
-        
-        # 1行の実際の高さ（アイテムの高さ + 行間）
-        row_height = self.legend_params['item_height'] + self.legend_params['row_spacing']
-        
-        # 凡例の高さを計算
-        legend_height = (
-            self.legend_params['padding_top'] +           # 上部パディング
-            (row_height * rows) -                         # 全行の高さ
-            self.legend_params['row_spacing'] +           # 最後の行間を引く
-            self.legend_params['padding_bottom']          # 下部パディング
-        )
-        
-        return legend_height, items_per_row, row_height
+            使い方:
+              !calendar      → 今週 (月〜日)
+              !calendar -1   → 先週 (月〜日)
+            """
+            try:
+                week_start, week_end = self._get_week_range(offset)
+                sessions = self._get_game_sessions(ctx.author.id, week_start, week_end)
 
-    def generate_colors_for_games(self, game_names):
-        """ゲーム名に基づいてパステルカラーを生成"""
-        colors = {}
-        hue_step = 1.0 / (len(game_names) + 1)
-        
-        for i, game in enumerate(sorted(game_names)):
-            hue = i * hue_step
-            rgb = colorsys.hsv_to_rgb(hue, 0.4, 0.95)
-            colors[game] = tuple(int(x * 255) for x in rgb)
-        
-        return colors
+                if not sessions:
+                    period = (
+                        f"{week_start.strftime('%Y/%m/%d')} 〜 "
+                        f"{week_end.strftime('%Y/%m/%d')}"
+                    )
+                    embed = discord.Embed(
+                        title="📅 プレイ記録なし",
+                        description=f"{period} のプレイ記録が見つかりませんでした。",
+                        color=discord.Color.orange()
+                    )
+                    await ctx.send(embed=embed)
+                    return
 
-    def draw_rounded_rectangle(self, draw, xy, radius, fill, outline=None):
-        """角丸の四角形を描画"""
-        x1, y1, x2, y2 = xy
-        height = y2 - y1
-        
-        if height < radius * 2:
-            min_height = 4
-            center_y = (y1 + y2) / 2
-            y1 = center_y - min_height/2
-            y2 = center_y + min_height/2
-            draw.rectangle([x1, y1, x2, y2], fill=fill, outline=outline)
-            return
-        
-        diameter = radius * 2
-        draw.ellipse([x1, y1, x1 + diameter, y1 + diameter], fill=fill, outline=outline)
-        draw.ellipse([x2 - diameter, y1, x2, y1 + diameter], fill=fill, outline=outline)
-        draw.ellipse([x1, y2 - diameter, x1 + diameter, y2], fill=fill, outline=outline)
-        draw.ellipse([x2 - diameter, y2 - diameter, x2, y2], fill=fill, outline=outline)
-        
-        draw.rectangle([x1 + radius, y1, x2 - radius, y2], fill=fill)
-        draw.rectangle([x1, y1 + radius, x2, y2 - radius], fill=fill)
+                image = self._generate_calendar_image(sessions, week_start, week_end)
 
-    def get_game_sessions(self, user_id):
-        """データベースからゲームセッションを取得"""
-        conn = sqlite3.connect('game_history.db')
+                with io.BytesIO() as buf:
+                    image.save(buf, 'PNG')
+                    buf.seek(0)
+                    period = (
+                        f"{week_start.strftime('%Y/%m/%d')} 〜 "
+                        f"{week_end.strftime('%Y/%m/%d')}"
+                    )
+                    await ctx.send(
+                        f"🎮 **{ctx.author.display_name}** のゲームプレイカレンダー ({period})",
+                        file=discord.File(fp=buf, filename='calendar.png')
+                    )
+
+            except Exception as e:
+                await ctx.send(f"カレンダーの生成中にエラーが発生しました: {str(e)}")
+                raise e
+
+    # ──────────────────────────────────────────────
+    # データ取得
+    # ──────────────────────────────────────────────
+    def _get_week_range(self, offset: int = 0) -> tuple[datetime, datetime]:
+        """今週(offset=0)または先週(offset=-1)の月〜日を返す"""
+        today = datetime.now()
+        # 今週の月曜日
+        monday = today - timedelta(days=today.weekday())
+        monday = monday.replace(hour=0, minute=0, second=0, microsecond=0)
+        # offsetで週をずらす
+        week_start = monday + timedelta(weeks=offset)
+        week_end   = week_start + timedelta(days=6, hours=23, minutes=59, seconds=59)
+        return week_start, week_end
+
+    def _get_game_sessions(
+        self, user_id, week_start: datetime, week_end: datetime
+    ) -> list[tuple]:
+        """DBから指定週のゲームセッションを取得"""
+        conn = sqlite3.connect(DB_PATH)
         c = conn.cursor()
-        
-        one_week_ago = datetime.now() - timedelta(days=7)
-        
         c.execute('''
-            SELECT 
-                game_name,
-                start_time,
-                end_time,
-                duration
+            SELECT game_name, start_time, end_time, duration
             FROM game_sessions
-            WHERE user_id = ? AND datetime(start_time) >= datetime(?)
+            WHERE user_id = ?
+              AND datetime(start_time) >= datetime(?)
+              AND datetime(start_time) <= datetime(?)
             ORDER BY start_time
-        ''', (str(user_id), one_week_ago.isoformat()))
-        
+        ''', (str(user_id), week_start.isoformat(), week_end.isoformat()))
         sessions = c.fetchall()
         conn.close()
         return sessions
 
-    def generate_calendar_image(self, sessions):
-        """改善されたカレンダー画像を生成"""
-        width = 1200
-        calendar_height = 830  
-        padding = 50          
-        margin = 60
-        minutes_per_pixel = 2
-        day_width = (width - margin * 2) // 7
-        
-        # ゲーム数に基づいて凡例のサイズを計算
-        unique_games = {session[0] for session in sessions}
-        game_colors = self.generate_colors_for_games(unique_games)
-        legend_box_height, items_per_row, row_height = self.calculate_legend_dimensions(
-            len(game_colors), width, margin
-        )
-        
-        total_height = calendar_height + padding + legend_box_height
-        
-        image = Image.new('RGB', (width + self.shadow_offset, total_height + self.shadow_offset), 'white')
-        main_image = Image.new('RGB', (width, total_height), self.base_colors['background'])
-        draw = ImageDraw.Draw(main_image)
-        
-        try:
-            title_font = ImageFont.truetype("/usr/share/fonts/google-noto-cjk/NotoSansJP-Regular.otf", 24)
-            font = ImageFont.truetype("/usr/share/fonts/google-noto-cjk/NotoSansJP-Regular.otf", 16)
-            small_font = ImageFont.truetype("/usr/share/fonts/google-noto-cjk/NotoSansJP-Regular.otf", 14)
-            print("フォントの読み込みに成功しました")
-        except Exception as e:
-            print(f"フォント読み込みエラー: {str(e)}")
-            title_font = font = small_font = ImageFont.load_default()
+    # ──────────────────────────────────────────────
+    # 描画ユーティリティ
+    # ──────────────────────────────────────────────
+    def _generate_colors(self, game_names: set) -> dict[str, tuple]:
+        """ゲームごとに鮮やかなHSL色を割り当て（ダークモード映え）"""
+        colors = {}
+        n = len(game_names)
+        for i, game in enumerate(sorted(game_names)):
+            hue = i / max(n, 1)
+            # 彩度0.75、明度0.85 → 鮮やかで視認性が高い
+            r, g, b = colorsys.hsv_to_rgb(hue, 0.72, 0.88)
+            colors[game] = (int(r * 255), int(g * 255), int(b * 255))
+        return colors
 
-        # カレンダー部分の描画
-        current_week = datetime.now().strftime('%Y/%m Week %U')
-        draw.text((margin, 20), f"Gaming Activity - {current_week}", 
-                self.base_colors['text'], font=title_font)
+    def _draw_rounded_rect(
+        self, draw: ImageDraw.ImageDraw,
+        xy: tuple, radius: int,
+        fill: tuple, outline: tuple = None, outline_width: int = 1
+    ):
+        """角丸矩形を描画"""
+        x1, y1, x2, y2 = xy
+        h = y2 - y1
+        if h < radius * 2:
+            # 高さが小さすぎる場合は普通の矩形
+            draw.rectangle([x1, y1, x2, y2], fill=fill, outline=outline, width=outline_width)
+            return
+        d = radius * 2
+        draw.ellipse([x1,        y1,        x1 + d, y1 + d], fill=fill)
+        draw.ellipse([x2 - d,    y1,        x2,     y1 + d], fill=fill)
+        draw.ellipse([x1,        y2 - d,    x1 + d, y2    ], fill=fill)
+        draw.ellipse([x2 - d,    y2 - d,    x2,     y2    ], fill=fill)
+        draw.rectangle([x1 + radius, y1, x2 - radius, y2], fill=fill)
+        draw.rectangle([x1, y1 + radius, x2, y2 - radius], fill=fill)
 
-        # 曜日の描画
-        days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday']
-        for i, day in enumerate(days):
-            x = margin + i * day_width
-            day_color = self.base_colors['text']
-            if i >= 5:  # 土日の色を変える
-                day_color = (66, 153, 225) if i == 5 else (236, 72, 153)
-            draw.text((x + 10, margin + 10), day, day_color, font=font)
-
-        # 時間軸の描画
-        for hour in range(25):
-            y = margin + 50 + (hour * 60) // minutes_per_pixel
-            # 偶数時間の背景をわずかに暗く
-            if hour < 24:
-                if hour % 2 == 0:
-                    draw.rectangle(
-                        [(margin, y), (width - margin, y + 60 // minutes_per_pixel)],
-                        fill=(245, 247, 250)
-                    )
-            
-            # グリッド線
-            draw.line(
-                [(margin, y), (width - margin, y)],
-                fill=self.base_colors['grid'],
-                width=2
-            )
-            
-            # 時間表示
-            time_text = f'{hour:02d}:00'
-            text_width = draw.textlength(time_text, font=small_font)
-            draw.text(
-                (margin - text_width - 15, y - 8),
-                time_text,
-                self.base_colors['text'],
-                font=small_font
-            )
-
-        # 垂直グリッド線
-        for i in range(8):
-            x = margin + i * day_width
-            draw.line(
-                [(x, margin + 50), (x, calendar_height)],
-                fill=self.base_colors['grid'],
-                width=2
-            )
-
-        # ゲームセッションの描画
-        for game_name, start_time, end_time, duration in sessions:
+    def _load_fonts(self) -> tuple:
+        """日本語フォントを読み込む（失敗時はデフォルト）"""
+        font_candidates = [
+            "/usr/share/fonts/google-noto-cjk/NotoSansJP-Regular.otf",
+            "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",
+            "/System/Library/Fonts/Hiragino Sans GB.ttc",
+        ]
+        for path in font_candidates:
             try:
-                start = datetime.fromisoformat(start_time)
-                end = datetime.fromisoformat(end_time)
-                
-                day_index = start.weekday()
-                
-                # 日付またぎの場合の処理
+                title  = ImageFont.truetype(path, 26)
+                normal = ImageFont.truetype(path, 16)
+                small  = ImageFont.truetype(path, 13)
+                tiny   = ImageFont.truetype(path, 11)
+                print(f"✅ フォント読み込み成功: {path}")
+                return title, normal, small, tiny
+            except Exception:
+                continue
+        print("⚠️ フォント読み込み失敗: デフォルトフォントを使用")
+        default = ImageFont.load_default()
+        return default, default, default, default
+
+    # ──────────────────────────────────────────────
+    # カレンダー画像生成
+    # ──────────────────────────────────────────────
+    def _generate_calendar_image(
+        self, sessions: list, week_start: datetime, week_end: datetime
+    ) -> Image.Image:
+        L = self.LAYOUT
+        T = self.THEME
+
+        # ── サイズ計算 ──
+        calendar_h  = int(24 * 60 * L['cell_h_per_min'])  # 1440px
+        content_w   = L['width'] - L['time_col_w'] - L['right_pad']
+        day_w       = content_w // 7
+
+        unique_games = {s[0] for s in sessions}
+        game_colors  = self._generate_colors(unique_games)
+        legend_h     = self._calc_legend_height(len(game_colors), content_w)
+
+        total_h = L['header_h'] + L['day_header_h'] + calendar_h + legend_h
+        img  = Image.new('RGB', (L['width'], total_h), T['bg'])
+        draw = ImageDraw.Draw(img)
+
+        title_font, normal_font, small_font, tiny_font = self._load_fonts()
+
+        # ── ヘッダー（タイトル＋期間） ──
+        period_str = (
+            f"{week_start.strftime('%Y/%m/%d')}（月）〜 "
+            f"{week_end.strftime('%Y/%m/%d')}（日）"
+        )
+        draw.text((L['time_col_w'], 20), "🎮 Gaming Activity", T['accent'], font=title_font)
+        draw.text((L['time_col_w'], 50), period_str, T['subtext'], font=small_font)
+
+        # ── 曜日ヘッダー ──
+        days_ja = ['月', '火', '水', '木', '金', '土', '日']
+        day_y = L['header_h']
+        for i, label in enumerate(days_ja):
+            x = L['time_col_w'] + i * day_w
+            if i == 5:
+                color = T['weekend_sat']
+            elif i == 6:
+                color = T['weekend_sun']
+            else:
+                color = T['text']
+            # 日付を取得
+            day_date = week_start + timedelta(days=i)
+            date_str = day_date.strftime('%-m/%-d')
+            draw.text(
+                (x + day_w // 2 - 15, day_y + 6),
+                f"{label}  {date_str}", color, font=normal_font
+            )
+
+        # ── カレンダーグリッド ──
+        cal_y = L['header_h'] + L['day_header_h']
+
+        # 背景パネル（カレンダーエリア）
+        self._draw_rounded_rect(
+            draw,
+            [L['time_col_w'] - 5, cal_y, L['width'] - L['right_pad'], cal_y + calendar_h],
+            radius=8, fill=T['panel']
+        )
+
+        # 偶数時間の薄い帯
+        for hour in range(0, 24, 2):
+            y = cal_y + int(hour * 60 * L['cell_h_per_min'])
+            h = int(60 * L['cell_h_per_min'])
+            draw.rectangle(
+                [L['time_col_w'], y, L['width'] - L['right_pad'], y + h],
+                fill=(20, 23, 35)
+            )
+
+        # 水平グリッド線（1時間ごと）
+        for hour in range(25):
+            y = cal_y + int(hour * 60 * L['cell_h_per_min'])
+            lw = 2 if hour % 6 == 0 else 1
+            draw.line(
+                [(L['time_col_w'], y), (L['width'] - L['right_pad'], y)],
+                fill=T['grid'], width=lw
+            )
+            # 時間ラベル
+            time_str = f"{hour:02d}:00"
+            draw.text(
+                (2, y - 8),
+                time_str, T['subtext'], font=tiny_font
+            )
+
+        # 垂直グリッド線（曜日ごと）
+        for i in range(8):
+            x = L['time_col_w'] + i * day_w
+            draw.line(
+                [(x, cal_y), (x, cal_y + calendar_h)],
+                fill=T['grid'], width=1
+            )
+
+        # ── セッションの描画 ──
+        for game_name, start_str, end_str, duration in sessions:
+            try:
+                start = datetime.fromisoformat(start_str)
+                end   = datetime.fromisoformat(end_str)
+                color = game_colors.get(game_name, (150, 150, 150))
+
+                def draw_session_block(s: datetime, e: datetime, day_idx: int):
+                    s_min = s.hour * 60 + s.minute
+                    e_min = e.hour * 60 + e.minute
+                    if e_min <= s_min:
+                        e_min = s_min + 1  # 最小1分
+                    sy = cal_y + int(s_min * L['cell_h_per_min'])
+                    ey = cal_y + int(e_min * L['cell_h_per_min'])
+                    x  = L['time_col_w'] + day_idx * day_w
+
+                    # メインブロック
+                    self._draw_rounded_rect(
+                        draw,
+                        [x + 3, sy + 1, x + day_w - 3, ey - 1],
+                        radius=4, fill=color
+                    )
+                    # ラベル（高さ十分なら表示）
+                    block_h = ey - sy
+                    if block_h >= 16:
+                        short_name = game_name[:14] + '…' if len(game_name) > 14 else game_name
+                        draw.text(
+                            (x + 6, sy + 3),
+                            short_name,
+                            (20, 20, 30),
+                            font=tiny_font
+                        )
+                    if block_h >= 30:
+                        dur_min = (e - s).seconds // 60
+                        draw.text(
+                            (x + 6, sy + 16),
+                            f"{dur_min}min",
+                            (40, 40, 55),
+                            font=tiny_font
+                        )
+
+                # 日付またぎ処理
                 if start.date() != end.date():
-                    # 日付が変わる時点で分割
+                    day_idx = (start.date() - week_start.date()).days
                     midnight = datetime.combine(end.date(), datetime.min.time())
-                    
-                    # 開始日のセッション
-                    start_minutes = start.hour * 60 + start.minute
-                    end_minutes = 24 * 60  # 23:59
-                    
-                    start_y = margin + 50 + start_minutes // minutes_per_pixel
-                    end_y = margin + 50 + end_minutes // minutes_per_pixel
-                    
-                    x = margin + day_index * day_width
-                    color = game_colors[game_name]
-                    
-                    self.draw_rounded_rectangle(
-                        draw,
-                        [x + 5, start_y, x + day_width - 5, end_y],
-                        radius=5,
-                        fill=color
-                    )
-                    
-                    # 翌日のセッション
-                    start_minutes = 0
-                    end_minutes = end.hour * 60 + end.minute
-                    
-                    start_y = margin + 50
-                    end_y = margin + 50 + end_minutes // minutes_per_pixel
-                    
-                    x = margin + ((day_index + 1) % 7) * day_width
-                    
-                    self.draw_rounded_rectangle(
-                        draw,
-                        [x + 5, start_y, x + day_width - 5, end_y],
-                        radius=5,
-                        fill=color
-                    )
-                    
+                    if 0 <= day_idx < 7:
+                        draw_session_block(start, midnight, day_idx)
+                    next_idx = day_idx + 1
+                    if 0 <= next_idx < 7:
+                        draw_session_block(midnight, end, next_idx)
                 else:
-                    # 通常の同日セッション
-                    start_minutes = start.hour * 60 + start.minute
-                    end_minutes = end.hour * 60 + end.minute
-                    
-                    # 時間が逆転している場合は調整
-                    if end_minutes <= start_minutes:
-                        end_minutes = start_minutes + 1
-                    
-                    start_y = margin + 50 + start_minutes // minutes_per_pixel
-                    end_y = margin + 50 + end_minutes // minutes_per_pixel
-                    
-                    x = margin + day_index * day_width
-                    color = game_colors[game_name]
-                    
-                    self.draw_rounded_rectangle(
-                        draw,
-                        [x + 5, start_y, x + day_width - 5, end_y],
-                        radius=5,
-                        fill=color
-                    )
-                    
-                    # セッションが一定の高さある場合のみゲーム名を表示
-                    if end_y - start_y > 30:
-                        text_y = start_y + (end_y - start_y) // 2 - 8
-                        game_name_short = game_name[:15] + '...' if len(game_name) > 15 else game_name
-                        draw.text((x + 10, text_y), game_name_short, self.base_colors['text'], font=small_font)
-            
+                    day_idx = (start.date() - week_start.date()).days
+                    if 0 <= day_idx < 7:
+                        draw_session_block(start, end, day_idx)
+
             except Exception as e:
-                print(f"エラー発生: ゲーム {game_name} の処理中 - {str(e)}")
+                print(f"⚠️ セッション描画エラー ({game_name}): {e}")
                 continue
 
-        # 凡例の描画
-        legend_y = calendar_height + padding
-        self.draw_rounded_rectangle(
-            draw,
-            [margin, legend_y, width - margin, legend_y + legend_box_height],
-            radius=10,
-            fill=(255, 255, 255)
-        )
+        # ── 凡例の描画 ──
+        self._draw_legend(draw, game_colors, cal_y + calendar_h, content_w, normal_font, small_font)
+
+        return img
+
+    def _calc_legend_height(self, game_count: int, content_w: int) -> int:
+        L = self.LAYOUT
+        items_per_row = max(1, content_w // L['legend_item_w'])
+        rows = math.ceil(game_count / items_per_row)
+        row_h = L['legend_item_h'] + L['legend_row_gap']
+        return L['legend_pad_top'] + row_h * rows + L['legend_pad_bot']
+
+    def _draw_legend(
+        self, draw, game_colors: dict,
+        top_y: int, content_w: int,
+        normal_font, small_font
+    ):
+        L = self.LAYOUT
+        T = self.THEME
+        items_per_row = max(1, content_w // L['legend_item_w'])
+        legend_y = top_y + 20
 
         draw.text(
-            (margin + 20, legend_y + 20),
-            "Game List",
-            self.base_colors['text'],
-            font=font
+            (L['time_col_w'], legend_y),
+            "Game List", T['accent'], font=normal_font
         )
 
-        # 凡例アイテムを横に並べて描画
-        games = sorted(game_colors.items())
-        for i, (game, color) in enumerate(games):
+        for i, (game, color) in enumerate(sorted(game_colors.items())):
             row = i // items_per_row
             col = i % items_per_row
-            
-            # 基準位置の計算
-            x = margin + 30 + col * self.legend_params['item_width']
-            y = (legend_y + 
-                 self.legend_params['padding_top'] + 
-                 row * row_height)
-            
-            # カラーボックスの描画
-            self.draw_rounded_rectangle(
+            x = L['time_col_w'] + col * L['legend_item_w']
+            y = legend_y + L['legend_pad_top'] + row * (L['legend_item_h'] + L['legend_row_gap'])
+
+            # カラーボックス
+            self._draw_rounded_rect(
                 draw,
-                [x, y, 
-                 x + self.legend_params['color_box_size'], 
-                 y + self.legend_params['color_box_size']],
-                radius=3,
-                fill=color
+                [x, y, x + L['color_box'], y + L['color_box']],
+                radius=3, fill=color
             )
-            
-            # ゲーム名の描画
-            draw.text(
-                (x + self.legend_params['text_offset_x'], 
-                 y + self.legend_params['text_offset_y']),
-                game,
-                self.base_colors['text'],
-                font=small_font
-            )
+            # ゲーム名
+            label = game[:24] + '…' if len(game) > 24 else game
+            draw.text((x + L['color_box'] + 8, y + 3), label, T['text'], font=small_font)
 
-        image.paste(main_image, (0, 0))
-        return image
-
+    # ──────────────────────────────────────────────
+    # ライフサイクル
+    # ──────────────────────────────────────────────
     async def setup_hook(self):
-        print("Bot is setting up...")
+        print("CalendarBot: セットアップ開始")
+
     async def on_ready(self):
         print(f'{self.user} としてログインしました!')
         print('使用可能なコマンド:')
-        print('!calendar - ゲームプレイカレンダーを表示')
+        print('  !calendar      - 今週のカレンダーを表示')
+        print('  !calendar -1   - 先週のカレンダーを表示')
