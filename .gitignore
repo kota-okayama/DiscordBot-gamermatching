@@ -1,3 +1,5 @@
 game_history.db
 .env
 serverbot.txt
+__pycache__/
+*.pyc
