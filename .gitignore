@@ -3,3 +3,4 @@ game_history.db
 serverbot.txt
 __pycache__/
 *.pyc
+plan.md

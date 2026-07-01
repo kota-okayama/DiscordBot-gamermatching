@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 import sqlite3
 
-DB_PATH = 'game_history.db'
+DB_PATH = 'data/game_history.db'
 
 
 class TrackerCog(commands.Cog, name='Tracker'):
@@ -14,11 +14,12 @@ class TrackerCog(commands.Cog, name='Tracker'):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
         self._vc_sessions: dict = {}  # {(id_a, id_b, channel_id): {'start_time': dt, 'channel_name': str}}
+        self._tracked_parties = set() # 複数ギルド重複発火防止用
         self._init_db()
 
     # ── DB初期化 ───────────────────────────────────────
     def _init_db(self):
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         c = conn.cursor()
         c.execute('''CREATE TABLE IF NOT EXISTS voice_co_sessions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -41,6 +42,77 @@ class TrackerCog(commands.Cog, name='Tracker'):
         conn.commit()
         conn.close()
         print("✅ TrackerCog: DBテーブル初期化完了")
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        now = datetime.now()
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        
+        for guild in self.bot.guilds:
+            # 1. 既存のVCセッションをスキャン
+            for vc in guild.voice_channels:
+                members = vc.members
+                for i, m1 in enumerate(members):
+                    for m2 in members[i+1:]:
+                        key = tuple(sorted([str(m1.id), str(m2.id)])) + (str(vc.id),)
+                        if key not in self._vc_sessions:
+                            self._vc_sessions[key] = {
+                                'start_time': now,
+                                'channel_name': vc.name
+                            }
+                            print(f"🎙️ [初期スキャン] VC共同参加を検出: {m1.name}↔{m2.name} in #{vc.name}")
+            
+            # 2. 既存のパーティセッションをスキャン
+            for member in guild.members:
+                for act in member.activities:
+                    if act.type == discord.ActivityType.playing:
+                        info = self._get_party_info(act)
+                        if info and info['party_id']:
+                            pid = info['party_id']
+                            size = info['size']
+                            # 既に登録されているか確認
+                            cur = conn.cursor()
+                            cur.execute("SELECT 1 FROM party_sessions WHERE party_id=? AND user_id=? AND left_at IS NULL", (pid, str(member.id)))
+                            if not cur.fetchone():
+                                conn.execute('''
+                                    INSERT INTO party_sessions
+                                    (party_id, user_id, game_name, party_size_current, party_size_max, joined_at)
+                                    VALUES (?, ?, ?, ?, ?, ?)
+                                ''', (pid, str(member.id), act.name,
+                                      size[0] if size else None,
+                                      size[1] if size else None,
+                                      now.isoformat()))
+                                print(f"🎮 [初期スキャン] パーティ参加を検出: {member.name} → {act.name}")
+        
+        conn.commit()
+        conn.close()
+        print("✅ TrackerCog: 初期スキャン完了")
+
+    async def cog_unload(self):
+        now = datetime.now()
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        
+        # 残っているVCセッションを全て強制保存
+        for key, session in self._vc_sessions.items():
+            id_a, id_b, channel_id = key
+            duration = int((now - session['start_time']).total_seconds())
+            
+            conn.execute('''
+                INSERT INTO voice_co_sessions
+                (user_id_a, user_id_b, channel_id, channel_name, start_time, end_time, duration)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ''', (id_a, id_b, channel_id, session['channel_name'],
+                  session['start_time'].isoformat(), now.isoformat(), duration))
+        
+        # パーティセッションの left_at を一括で閉じる
+        conn.execute('''
+            UPDATE party_sessions SET left_at=?
+            WHERE left_at IS NULL
+        ''', (now.isoformat(),))
+        
+        conn.commit()
+        conn.close()
+        print("🛑 TrackerCog: 終了時データ保存完了")
 
     # ── ヘルパー ───────────────────────────────────────
     def _get_game_name(self, member: discord.Member) -> Optional[str]:
@@ -89,7 +161,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
                 duration = int((now - session['start_time']).total_seconds())
                 id_a, id_b = sorted([str(member.id), str(other.id)])
                 game_b = self._get_game_name(other)
-                conn = sqlite3.connect(DB_PATH)
+                conn = sqlite3.connect(DB_PATH, timeout=10)
                 conn.execute('''
                     INSERT INTO voice_co_sessions
                     (user_id_a, user_id_b, channel_id, channel_name,
@@ -125,9 +197,14 @@ class TrackerCog(commands.Cog, name='Tracker'):
 
         for pid, act in after_parties.items():
             if pid not in before_parties:
+                # 複数サーバー共通のユーザーの場合、重複してイベントが発火するためスキップ
+                if (pid, str(after.id)) in self._tracked_parties:
+                    continue
+                self._tracked_parties.add((pid, str(after.id)))
+
                 info = self._get_party_info(act)
                 size = info['size'] if info else [None, None]
-                conn = sqlite3.connect(DB_PATH)
+                conn = sqlite3.connect(DB_PATH, timeout=10)
                 conn.execute('''
                     INSERT INTO party_sessions
                     (party_id, user_id, game_name, party_size_current, party_size_max, joined_at)
@@ -142,7 +219,8 @@ class TrackerCog(commands.Cog, name='Tracker'):
 
         for pid in before_parties:
             if pid not in after_parties:
-                conn = sqlite3.connect(DB_PATH)
+                self._tracked_parties.discard((pid, str(after.id)))
+                conn = sqlite3.connect(DB_PATH, timeout=10)
                 conn.execute('''
                     UPDATE party_sessions SET left_at=?
                     WHERE party_id=? AND user_id=? AND left_at IS NULL
@@ -156,7 +234,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
         if message.author.bot or not message.mentions:
             return
         now = datetime.now().isoformat()
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         for mentioned in message.mentions:
             if mentioned.bot or mentioned.id == message.author.id:
                 continue

@@ -3,8 +3,27 @@ import discord
 from discord.ext import commands
 import sqlite3
 import numpy as np
+import os
+import pickle
 
-DB_PATH = 'game_history.db'
+DB_PATH = 'data/game_history.db'
+
+# エンベディングのロード
+GAME_EMBEDDINGS = {}
+if os.path.exists('data/game_embeddings.pkl'):
+    try:
+        with open('data/game_embeddings.pkl', 'rb') as f:
+            GAME_EMBEDDINGS = pickle.load(f)
+        if GAME_EMBEDDINGS:
+            emb_matrix = np.array(list(GAME_EMBEDDINGS.values()))
+            mean_vec = np.mean(emb_matrix, axis=0)
+            for gname, vec in GAME_EMBEDDINGS.items():
+                centered = vec - mean_vec
+                norm = np.linalg.norm(centered)
+                GAME_EMBEDDINGS[gname] = centered / norm if norm > 0 else centered
+        print(f"Loaded {len(GAME_EMBEDDINGS)} game embeddings (Applied Mean Centering).")
+    except Exception as e:
+        print(f"Failed to load game embeddings: {e}")
 
 
 def _cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
@@ -52,6 +71,32 @@ def _build_user_vectors(cursor, days: int):
     return user_ids, all_games, game_mat, hour_mat
 
 
+def _build_user_embedding(user_game_vec, all_games):
+    """
+    プレイ時間を重みとして、ゲームのエンベディングの加重平均（ユーザーベクトル）を計算する
+    """
+    if not GAME_EMBEDDINGS:
+        return np.zeros(384) # ダミー次元
+        
+    vecs = []
+    weights = []
+    for j, gname in enumerate(all_games):
+        w = user_game_vec[j]
+        if w > 0 and gname in GAME_EMBEDDINGS:
+            vecs.append(GAME_EMBEDDINGS[gname])
+            weights.append(w)
+            
+    if not vecs:
+        return np.zeros(384)
+        
+    vecs = np.array(vecs)
+    weights = np.array(weights)
+    
+    weights = weights / weights.sum()
+    user_emb = np.average(vecs, axis=0, weights=weights)
+    return user_emb
+
+
 def _progress_bar(pct: int, length: int = 10) -> str:
     filled = int(length * pct / 100)
     return '█' * filled + '▒' * (length - filled)
@@ -66,7 +111,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
     async def find_similar_players(self, ctx, days: int = 30):
         """コサイン類似度でプレイスタイルが近いサーバーメンバーを表示"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=10)
             user_ids, all_games, game_mat, hour_mat = _build_user_vectors(conn.cursor(), days)
             conn.close()
 
@@ -78,34 +123,41 @@ class RecommenderCog(commands.Cog, name='Recommender'):
                 return
 
             me = user_ids.index(str(ctx.author.id))
+            
+            # 各ユーザーのコンテンツベクトル（好みの重心）を計算
+            user_embs = [_build_user_embedding(game_mat[i], all_games) for i in range(len(user_ids))]
+            
             results = []
             for i, uid in enumerate(user_ids):
                 if uid == str(ctx.author.id):
                     continue
-                sg = _cosine_similarity(game_mat[me], game_mat[i])
-                sh = _cosine_similarity(hour_mat[me], hour_mat[i])
-                score = sg * 0.6 + sh * 0.4
+                sg = _cosine_similarity(game_mat[me], game_mat[i]) # 一致するゲームの類似度
+                sh = _cosine_similarity(hour_mat[me], hour_mat[i]) # 時間帯の類似度
+                sc = _cosine_similarity(user_embs[me], user_embs[i]) # ゲーム性・好みの類似度（エンベディング）
+                
+                # スコアをブレンド（例: ゲーム30%, 時間帯20%, 好み50%）
+                score = sg * 0.3 + sh * 0.2 + sc * 0.5
                 common = [all_games[j] for j in range(len(all_games))
                           if game_mat[me, j] > 0 and game_mat[i, j] > 0]
-                results.append((uid, score, sg, sh, common))
+                results.append((uid, score, sg, sh, sc, common))
 
             results.sort(key=lambda x: x[1], reverse=True)
 
             embed = discord.Embed(
                 title="👥 プレイスタイルが似ているプレイヤー",
-                description=f"**{ctx.author.display_name}** さんとの類似度（過去{days}日）\nスコア = ゲーム類似度×0.6 ＋ 時間帯類似度×0.4",
+                description=f"**{ctx.author.display_name}** さんとの類似度（過去{days}日）\nスコア = プレイタイトル30% ＋ 時間帯20% ＋ ジャンル・好み50%",
                 color=discord.Color.blue())
 
             shown = 0
-            for uid, score, sg, sh, common in results[:10]:
-                member = ctx.guild.get_member(int(uid))
-                if not member:
+            for uid, score, sg, sh, sc, common in results:
+                user = self.bot.get_user(int(uid))
+                if not user:
                     continue
                 pct = int(score * 100)
                 common_str = ', '.join(common[:5]) + (f' 他{len(common)-5}本' if len(common) > 5 else '')
                 embed.add_field(
-                    name=f"👤 {member.display_name}",
-                    value=f"{_progress_bar(pct)} **{pct}%**\nゲーム:{int(sg*100)}% / 時間帯:{int(sh*100)}%\n共通: {common_str or 'なし'}",
+                    name=f"👤 {user.display_name}",
+                    value=f"{_progress_bar(pct)} **{pct}%**\nタイトル一致:{int(sg*100)}% / 時間帯:{int(sh*100)}% / ジャンル・好み:{int(sc*100)}%\n共通: {common_str or 'なし'}",
                     inline=False)
                 shown += 1
                 if shown >= 5:
@@ -126,7 +178,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
     async def recommend_games(self, ctx, days: int = 30, top_k: int = 5):
         """協調フィルタリングでゲームを推薦"""
         try:
-            conn = sqlite3.connect(DB_PATH)
+            conn = sqlite3.connect(DB_PATH, timeout=10)
             user_ids, all_games, game_mat, hour_mat = _build_user_vectors(conn.cursor(), days)
             conn.close()
 
@@ -143,13 +195,16 @@ class RecommenderCog(commands.Cog, name='Recommender'):
                 await ctx.send("このサーバーで記録されているゲームはすべてプレイ済みです！")
                 return
 
+            user_embs = [_build_user_embedding(game_mat[i], all_games) for i in range(len(user_ids))]
+
             sim_scores = {}
             for i, uid in enumerate(user_ids):
                 if uid == str(ctx.author.id):
                     continue
                 sg = _cosine_similarity(game_mat[me], game_mat[i])
                 sh = _cosine_similarity(hour_mat[me], hour_mat[i])
-                sim_scores[i] = sg * 0.6 + sh * 0.4
+                sc = _cosine_similarity(user_embs[me], user_embs[i])
+                sim_scores[i] = sg * 0.3 + sh * 0.2 + sc * 0.5
 
             rec: dict = {}
             for j in unplayed:
@@ -171,7 +226,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
 
             for j, score in sorted_rec[:top_k]:
                 pct = int(score / max_s * 100) if max_s > 0 else 0
-                players = [ctx.guild.get_member(int(user_ids[i]))
+                players = [self.bot.get_user(int(user_ids[i]))
                            for i, s in sim_scores.items() if game_mat[i, j] > 0]
                 players = [p for p in players if p]
                 names = ', '.join(p.display_name for p in players[:3])
@@ -188,3 +243,33 @@ class RecommenderCog(commands.Cog, name='Recommender'):
         except Exception as e:
             print(f"Error in !recommend: {e}")
             await ctx.send(f"エラーが発生しました: {e}")
+
+    @commands.command(name='dummy_similar')
+    async def dummy_similar(self, ctx):
+        """[ダミーデータ] 類似ユーザーを検索"""
+        embed = discord.Embed(
+            title="👥 プレイスタイルが似ているプレイヤー",
+            description=f"**{ctx.author.display_name}** さんとの類似度（過去30日）\nスコア = ゲーム類似度×0.6 ＋ 時間帯類似度×0.4",
+            color=discord.Color.blue())
+        
+        embed.add_field(name="👤 kurara_ra", value=f"{_progress_bar(85)} **85%**\nゲーム:80% / 時間帯:92%\n共通: Valorant, Apex Legends", inline=False)
+        embed.add_field(name="👤 test_gamer", value=f"{_progress_bar(62)} **62%**\nゲーム:70% / 時間帯:50%\n共通: Minecraft", inline=False)
+        embed.add_field(name="👤 pro_player", value=f"{_progress_bar(45)} **45%**\nゲーム:30% / 時間帯:67%\n共通: Genshin Impact", inline=False)
+        
+        embed.set_footer(text="コサイン類似度ベース（ダミーデータ）")
+        await ctx.send(embed=embed)
+
+    @commands.command(name='dummy_recommend')
+    async def dummy_recommend(self, ctx):
+        """[ダミーデータ] ゲームを推薦"""
+        embed = discord.Embed(
+            title="🎯 おすすめのゲーム",
+            description=f"**{ctx.author.display_name}** さんへの協調フィルタリング推薦（過去30日）",
+            color=discord.Color.green())
+            
+        embed.add_field(name="🎮 Escape from Tarkov", value=f"{_progress_bar(95)} 95%\nプレイ中: kurara_ra, test_gamer", inline=False)
+        embed.add_field(name="🎮 Overwatch 2", value=f"{_progress_bar(78)} 78%\nプレイ中: pro_player, user123", inline=False)
+        embed.add_field(name="🎮 League of Legends", value=f"{_progress_bar(52)} 52%\nプレイ中: kurara_ra", inline=False)
+        
+        embed.set_footer(text="協調フィルタリング（ダミーデータ）")
+        await ctx.send(embed=embed)

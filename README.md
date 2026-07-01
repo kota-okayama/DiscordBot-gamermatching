@@ -91,10 +91,42 @@ discord-bot-matching/
 
 ## 📱 使用方法
 
-### Botの起動
+### Botの起動（ローカル環境）
 
 ```bash
 python main.py
+```
+
+### Botの起動・管理（Docker Swarm 環境）
+
+本番運用やバックグラウンドでの常時稼働には、Docker Swarm の使用を推奨します。データはホスト側の `./data` ディレクトリに永続化されます。
+
+**1. シークレット（Token）の登録**
+```bash
+# TokenをDocker Secretとして登録します
+echo "your_bot_token_here" | docker secret create discord_token -
+```
+
+**2. Botの起動（デプロイ）**
+```bash
+docker stack deploy -c docker-compose.yml matching-bot-stack
+```
+
+**3. ログの確認**
+```bash
+# リアルタイムでログを表示
+docker service logs -f matching-bot-stack_matching-bot
+```
+
+**4. Botの停止**
+```bash
+docker stack rm matching-bot-stack
+```
+
+**5. コード修正後の再ビルドと反映**
+```bash
+docker build -t matching-bot:latest .
+docker service update --force matching-bot-stack_matching-bot
 ```
 
 ### 基本コマンド

@@ -8,7 +8,7 @@ matplotlib.use('Agg')  # GUIなし環境向け
 import matplotlib.pyplot as plt
 import io
 
-DB_PATH = 'game_history.db'
+DB_PATH = 'data/game_history.db'
 
 
 class ProfileCog(commands.Cog, name='Profile'):
@@ -64,7 +64,7 @@ class ProfileCog(commands.Cog, name='Profile'):
             await ctx.send(embed=embed)
 
     def _get_profile(self, user_id: int):
-        conn = sqlite3.connect(DB_PATH)
+        conn = sqlite3.connect(DB_PATH, timeout=10)
         favs = pd.read_sql_query('''
             SELECT game_name, SUM(duration) as total
             FROM game_sessions WHERE user_id=?
@@ -82,3 +82,39 @@ class ProfileCog(commands.Cog, name='Profile'):
             'favorites': favs[['game_name', 'total']].values.tolist(),
             'hours': hours[['hour', 'count']].values.tolist(),
         }
+
+    @commands.command(name='dummy_profile')
+    async def dummy_profile(self, ctx):
+        """[ダミーデータ] プロフィールを表示"""
+        embed = discord.Embed(
+            title=f"📊 {ctx.author.display_name} のゲームプロフィール [ダミーデータ]",
+            color=discord.Color.purple())
+
+        favs = (
+            "🎮 Valorant: 120.5時間\n"
+            "🎮 Apex Legends: 85.0時間\n"
+            "🎮 Minecraft: 40.2時間\n"
+            "🎮 Genshin Impact: 25.0時間"
+        )
+        embed.add_field(name="🏆 お気に入りゲーム", value=favs, inline=False)
+
+        fig, ax = plt.subplots(figsize=(10, 4))
+        hours  = [18, 20, 22, 0, 2, 14, 16]
+        counts = [2, 15, 25, 18, 5, 4, 8]
+        ax.bar(hours, counts, color='#6464e8', alpha=0.8)
+        ax.set_title('Distribution of Playing Time')
+        ax.set_xlabel('Hour of Day')
+        ax.set_ylabel('Session Count')
+        ax.set_xticks(range(0, 24, 2))
+        ax.set_xlim(-0.5, 23.5)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+
+        buf = io.BytesIO()
+        fig.savefig(buf, format='png', dpi=150)
+        buf.seek(0)
+        plt.close(fig)
+
+        file = discord.File(buf, filename='profile.png')
+        embed.set_image(url='attachment://profile.png')
+        await ctx.send(file=file, embed=embed)

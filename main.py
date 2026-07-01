@@ -4,6 +4,29 @@ from dotenv import load_dotenv
 import discord
 from discord.ext import commands
 
+
+def load_token() -> str:
+    """Docker Secrets のファイルを優先し、なければ .env から読み込む。"""
+    # Docker Secrets: /run/secrets/discord_token にマウントされる
+    secret_file = os.getenv('DISCORD_TOKEN_FILE', '/run/secrets/discord_token')
+    if os.path.exists(secret_file):
+        with open(secret_file, 'r') as f:
+            token = f.read().strip()
+        if token:
+            return token
+
+    # フォールバック: ローカル開発用 .env
+    load_dotenv()
+    token = os.getenv('DISCORD_TOKEN')
+    if token:
+        return token
+
+    raise ValueError(
+        "Discord トークンが見つかりません。\n"
+        "本番環境: `docker secret create discord_token` でシークレットを登録してください。\n"
+        "開発環境: .env に DISCORD_TOKEN を設定してください。"
+    )
+
 # 各機能モジュールをCogとしてインポート
 from cogs.tracker_cog   import TrackerCog    # VC・Party・メンション収集
 from cogs.history_cog   import HistoryCog    # ゲームセッション記録・!history etc
@@ -12,10 +35,7 @@ from cogs.calendar_cog  import CalendarCog   # !calendar
 from cogs.profile_cog   import ProfileCog    # !profile
 
 async def main():
-    load_dotenv()
-    TOKEN = os.getenv('DISCORD_TOKEN')
-    if not TOKEN:
-        raise ValueError("DISCORD_TOKEN が .env に設定されていません")
+    TOKEN = load_token()
 
     intents = discord.Intents.all()
     bot = commands.Bot(command_prefix='!', intents=intents)

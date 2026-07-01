@@ -1,0 +1,21 @@
+services:
+  matching-bot:
+    image: matching-bot:latest
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: any          # クラッシュ時も自動再起動
+        delay: 5s
+        max_attempts: 5
+    secrets:
+      - discord_token
+    environment:
+      - DISCORD_TOKEN_FILE=/run/secrets/discord_token
+    volumes:
+      # ホストの ./data ディレクトリをコンテナの /app/data にマウント（これで手元にファイルが見えます）
+      - ./data:/app/data
+
+# シークレットは事前に `docker secret create` で登録しておく
+secrets:
+  discord_token:
+    external: true
