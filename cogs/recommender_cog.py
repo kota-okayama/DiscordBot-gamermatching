@@ -206,38 +206,60 @@ class RecommenderCog(commands.Cog, name='Recommender'):
                 sc = _cosine_similarity(user_embs[me], user_embs[i])
                 sim_scores[i] = sg * 0.3 + sh * 0.2 + sc * 0.5
 
-            rec: dict = {}
+            rec_cf = {}
             for j in unplayed:
-                s = sum(sim * game_mat[i, j] for i, sim in sim_scores.items())
+                # プレイ時間を対数スケールにして、一部の廃人プレイヤーのプレイ時間に引っ張られすぎないようにする
+                s = sum(sim * np.log1p(game_mat[i, j]) for i, sim in sim_scores.items() if sim > 0)
                 if s > 0:
-                    rec[j] = s
+                    rec_cf[j] = s
 
-            if not rec:
+            if not rec_cf:
                 await ctx.send("推薦できるゲームが見つかりませんでした。")
                 return
 
-            sorted_rec = sorted(rec.items(), key=lambda x: x[1], reverse=True)
-            max_s = sorted_rec[0][1]
+            # CFスコアを0-1に正規化
+            max_cf = max(rec_cf.values()) if rec_cf else 1
+            
+            final_rec = []
+            for j, cf_raw in rec_cf.items():
+                cf_score = cf_raw / max_cf
+                
+                game_name = all_games[j]
+                cb_score = 0.0
+                if game_name in GAME_EMBEDDINGS:
+                    cb_score = _cosine_similarity(user_embs[me], GAME_EMBEDDINGS[game_name])
+                    
+                # スコアのブレンド（フレンドが遊んでいるか 50% + 自分の好みのジャンルか 50%）
+                total_score = cf_score * 0.5 + max(0, cb_score) * 0.5
+                final_rec.append((j, total_score, cf_score, cb_score))
+
+            final_rec.sort(key=lambda x: x[1], reverse=True)
+            max_total = final_rec[0][1] if final_rec else 1
 
             embed = discord.Embed(
                 title="🎯 おすすめのゲーム",
-                description=f"**{ctx.author.display_name}** さんへの協調フィルタリング推薦（過去{days}日）",
+                description=f"**{ctx.author.display_name}** さんへのハイブリッド推薦（過去{days}日）\nスコア = フレンドのプレイ状況50% ＋ ジャンルの一致度50%",
                 color=discord.Color.green())
 
-            for j, score in sorted_rec[:top_k]:
-                pct = int(score / max_s * 100) if max_s > 0 else 0
-                players = [self.bot.get_user(int(user_ids[i]))
-                           for i, s in sim_scores.items() if game_mat[i, j] > 0]
-                players = [p for p in players if p]
-                names = ', '.join(p.display_name for p in players[:3])
+            for j, total, cf, cb in final_rec[:top_k]:
+                pct = int(total / max_total * 100) if max_total > 0 else 0
+                
+                # このゲームを遊んでいるフレンドを抽出（類似度スコアが高い順）
+                players = [(self.bot.get_user(int(user_ids[i])), sim_scores[i])
+                           for i in sim_scores if game_mat[i, j] > 0]
+                players = [p for p in players if p[0]]
+                players.sort(key=lambda x: x[1], reverse=True)
+                
+                names = ', '.join(p[0].display_name for p in players[:3])
                 if len(players) > 3:
                     names += f' 他{len(players)-3}人'
+                    
                 embed.add_field(
                     name=f"🎮 {all_games[j]}",
-                    value=f"{_progress_bar(pct)} {pct}%\nプレイ中: {names or '不明'}",
+                    value=f"{_progress_bar(pct)} **{pct}%**\n流行度(CF): {int(cf*100)}% / ジャンル(CB): {int(max(0, cb)*100)}%\nプレイ中: {names or 'なし'}",
                     inline=False)
 
-            embed.set_footer(text="協調フィルタリング（コサイン類似度重み付き）")
+            embed.set_footer(text="ハイブリッド推薦（協調フィルタリング ＋ コンテンツベース）")
             await ctx.send(embed=embed)
 
         except Exception as e:
@@ -264,12 +286,12 @@ class RecommenderCog(commands.Cog, name='Recommender'):
         """[ダミーデータ] ゲームを推薦"""
         embed = discord.Embed(
             title="🎯 おすすめのゲーム",
-            description=f"**{ctx.author.display_name}** さんへの協調フィルタリング推薦（過去30日）",
+            description=f"**{ctx.author.display_name}** さんへのハイブリッド推薦（過去30日）\nスコア = フレンドのプレイ状況50% ＋ ジャンルの一致度50%",
             color=discord.Color.green())
             
-        embed.add_field(name="🎮 Escape from Tarkov", value=f"{_progress_bar(95)} 95%\nプレイ中: kurara_ra, test_gamer", inline=False)
-        embed.add_field(name="🎮 Overwatch 2", value=f"{_progress_bar(78)} 78%\nプレイ中: pro_player, user123", inline=False)
-        embed.add_field(name="🎮 League of Legends", value=f"{_progress_bar(52)} 52%\nプレイ中: kurara_ra", inline=False)
+        embed.add_field(name="🎮 Escape from Tarkov", value=f"{_progress_bar(95)} **95%**\n流行度(CF): 80% / ジャンル(CB): 100%\nプレイ中: kurara_ra, test_gamer", inline=False)
+        embed.add_field(name="🎮 Overwatch 2", value=f"{_progress_bar(78)} **78%**\n流行度(CF): 90% / ジャンル(CB): 66%\nプレイ中: pro_player, user123", inline=False)
+        embed.add_field(name="🎮 League of Legends", value=f"{_progress_bar(52)} **52%**\n流行度(CF): 100% / ジャンル(CB): 4%\nプレイ中: kurara_ra", inline=False)
         
-        embed.set_footer(text="協調フィルタリング（ダミーデータ）")
+        embed.set_footer(text="ハイブリッド推薦（ダミーデータ）")
         await ctx.send(embed=embed)

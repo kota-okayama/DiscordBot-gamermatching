@@ -29,42 +29,76 @@ class HistoryCog(commands.Cog, name='History'):
     @commands.Cog.listener()
     async def on_ready(self):
         now = datetime.now()
+        conn = sqlite3.connect(DB_PATH, timeout=10)
+        c = conn.cursor()
+        
+        # 1. DB上の未終了(NULL)セッションを読み込む
+        c.execute('''
+            SELECT id, user_id, game_name, start_time, details 
+            FROM game_sessions 
+            WHERE end_time IS NULL
+        ''')
+        null_sessions = c.fetchall()
+        db_active = {}
+        for row in null_sessions:
+            db_active[(str(row[1]), row[2])] = {
+                'id': row[0],
+                'start_time': datetime.fromisoformat(row[3]),
+                'details': row[4]
+            }
+
+        # 2. 現在Discord上でプレイ中のゲームを取得
+        current_playing = {}
         for guild in self.bot.guilds:
             for member in guild.members:
                 for activity in member.activities:
                     if activity.type == discord.ActivityType.playing:
-                        self.active_sessions[(member.id, activity.name)] = {
-                            'start_time': now,
-                            'details': getattr(activity, 'details', None)
+                        current_playing[(str(member.id), activity.name)] = {
+                            'member': member,
+                            'activity': activity
                         }
-                        print(f"🎮 [初期スキャン] ゲームプレイを検出: {member.name} - {activity.name}")
-        print("✅ HistoryCog: 初期スキャン完了")
 
-    async def cog_unload(self):
-        now = datetime.now()
-        conn = sqlite3.connect(DB_PATH, timeout=10)
-        
-        for key, session in self.active_sessions.items():
-            user_id, game_name = key
-            duration = int((now - session['start_time']).total_seconds())
+        # 3. 状態の照合
+        for key, data in current_playing.items():
+            member, activity = data['member'], data['activity']
+            if key in db_active:
+                # 既にDBにNULLで存在するので継続
+                self.active_sessions[(member.id, activity.name)] = db_active[key]
+                print(f"🎮 [復元] ゲームプレイ継続中: {member.name} - {activity.name}")
+                del db_active[key]
+            else:
+                # 新規開始
+                details = getattr(activity, 'details', None)
+                c.execute('''
+                    INSERT INTO game_sessions
+                    (user_id, user_name, game_name, start_time, end_time, duration, details)
+                    VALUES (?, ?, ?, ?, NULL, 0, ?)
+                ''', (str(member.id), member.name, activity.name, now.isoformat(), details))
+                self.active_sessions[(member.id, activity.name)] = {
+                    'start_time': now,
+                    'id': c.lastrowid,
+                    'details': details
+                }
+                print(f"🎮 [新規] ゲームプレイ開始: {member.name} - {activity.name}")
+
+        # 4. DBにはNULLで残っているが、現在はもうプレイしていないセッションを閉じる
+        for key, session_data in db_active.items():
+            duration = int((now - session_data['start_time']).total_seconds())
+            c.execute('''
+                UPDATE game_sessions
+                SET end_time=?, duration=?
+                WHERE id=?
+            ''', (now.isoformat(), duration, session_data['id']))
+            print(f"🧹 [クリーンアップ] オフライン中に終了: {key[0]} - {key[1]} ({duration}秒)")
             
-            # cog_unload時にはmember.nameが取れないためuser_idで代用するか、キャッシュから取る
-            user_name = f"User({user_id})"
-            user = self.bot.get_user(user_id)
-            if user:
-                user_name = user.name
-                
-            conn.execute('''
-                INSERT INTO game_sessions
-                (user_id, user_name, game_name, start_time, end_time, duration, details)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', (str(user_id), user_name, game_name,
-                  session['start_time'].isoformat(), now.isoformat(),
-                  duration, session['details']))
-                  
         conn.commit()
         conn.close()
-        print("🛑 HistoryCog: 終了時データ保存完了")
+        print("✅ HistoryCog: 起動時セッション処理完了")
+
+    async def cog_unload(self):
+        # 以前のように強制的にend_timeを書き込む処理は廃止。
+        # DB上はNULLのまま残し、次回on_readyで復元またはクリーンアップする。
+        print("🛑 HistoryCog: 終了（セッション状態はDBに保持）")
 
     # ── プレゼンス監視（ゲームセッション記録） ─────────
     @commands.Cog.listener()
@@ -73,37 +107,48 @@ class HistoryCog(commands.Cog, name='History'):
         if after.activities:
             for activity in after.activities:
                 if activity.type == discord.ActivityType.playing:
-                    # 複数サーバー共通のユーザーの場合、重複してイベントが発火するためスキップ
                     if (after.id, activity.name) in self.active_sessions:
                         continue
                     
-                    if (not before.activities or
-                         activity.name not in [a.name for a in before.activities]):
+                    if (not before.activities or activity.name not in [a.name for a in before.activities]):
+                        now = datetime.now()
+                        details = getattr(activity, 'details', None)
+                        
+                        conn = sqlite3.connect(DB_PATH, timeout=10)
+                        c = conn.cursor()
+                        c.execute('''
+                            INSERT INTO game_sessions
+                            (user_id, user_name, game_name, start_time, end_time, duration, details)
+                            VALUES (?, ?, ?, ?, NULL, 0, ?)
+                        ''', (str(after.id), after.name, activity.name, now.isoformat(), details))
+                        conn.commit()
+                        
                         self.active_sessions[(after.id, activity.name)] = {
-                            'start_time': datetime.now(),
-                            'details': getattr(activity, 'details', None)
+                            'start_time': now,
+                            'id': c.lastrowid,
+                            'details': details
                         }
+                        conn.close()
                         print(f"🎮 ゲーム開始: {after.name} - {activity.name}")
 
         # ゲーム終了
         if before.activities:
             for activity in before.activities:
                 if (activity.type == discord.ActivityType.playing and
-                        (not after.activities or
-                         activity.name not in [a.name for a in after.activities])):
+                        (not after.activities or activity.name not in [a.name for a in after.activities])):
                     session = self.active_sessions.pop((before.id, activity.name), None)
                     if not session:
                         continue
+                    
                     end_time = datetime.now()
                     duration = int((end_time - session['start_time']).total_seconds())
+                    
                     conn = sqlite3.connect(DB_PATH, timeout=10)
                     conn.execute('''
-                        INSERT INTO game_sessions
-                        (user_id, user_name, game_name, start_time, end_time, duration, details)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (str(before.id), before.name, activity.name,
-                          session['start_time'].isoformat(), end_time.isoformat(),
-                          duration, session['details']))
+                        UPDATE game_sessions
+                        SET end_time=?, duration=?
+                        WHERE id=?
+                    ''', (end_time.isoformat(), duration, session['id']))
                     conn.commit()
                     conn.close()
                     print(f"💾 ゲーム終了: {before.name} - {activity.name} ({duration}秒)")

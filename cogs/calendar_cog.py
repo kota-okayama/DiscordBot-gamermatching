@@ -67,6 +67,39 @@ class CalendarCog(commands.Cog, name='Calendar'):
             await ctx.send(f"エラーが発生しました: {e}")
             raise
 
+    @commands.command(name='d_calendar')
+    async def debug_calendar(self, ctx, user: discord.User, offset: int = 0):
+        """
+        [デバッグ用] 他のユーザーのゲームプレイカレンダーを表示
+
+        !d_calendar @ユーザー      → 指定ユーザーの今週
+        !d_calendar @ユーザー -1   → 指定ユーザーの先週
+        """
+        try:
+            week_start, week_end = self._get_week_range(offset)
+            sessions = self._get_sessions(user.id, week_start, week_end)
+
+            period = (f"{week_start.strftime('%Y/%m/%d')} 〜 "
+                      f"{week_end.strftime('%Y/%m/%d')}")
+
+            if not sessions:
+                await ctx.send(embed=discord.Embed(
+                    title="📅 プレイ記録なし",
+                    description=f"{user.display_name} さんの {period} のプレイ記録が見つかりませんでした。",
+                    color=discord.Color.orange()))
+                return
+
+            img = self._generate_image(sessions, week_start, week_end)
+            with io.BytesIO() as buf:
+                img.save(buf, 'PNG')
+                buf.seek(0)
+                await ctx.send(
+                    f"🎮 **{user.display_name}** のカレンダー ({period}) [デバッグ]",
+                    file=discord.File(fp=buf, filename='calendar.png'))
+        except Exception as e:
+            await ctx.send(f"エラーが発生しました: {e}")
+            raise
+
     def _get_week_range(self, offset: int = 0):
         today = datetime.now()
         monday = today - timedelta(days=today.weekday())
@@ -81,9 +114,11 @@ class CalendarCog(commands.Cog, name='Calendar'):
         c.execute('''
             SELECT game_name, start_time, end_time, duration
             FROM game_sessions
-            WHERE user_id=? AND datetime(start_time)>=datetime(?) AND datetime(start_time)<=datetime(?)
+            WHERE user_id=? 
+              AND datetime(start_time)<=datetime(?) 
+              AND (end_time IS NULL OR datetime(end_time)>=datetime(?))
             ORDER BY start_time
-        ''', (str(user_id), week_start.isoformat(), week_end.isoformat()))
+        ''', (str(user_id), week_end.isoformat(), week_start.isoformat()))
         rows = c.fetchall()
         conn.close()
         return rows
@@ -233,7 +268,12 @@ class CalendarCog(commands.Cog, name='Calendar'):
         for game_name, start_str, end_str, _ in sessions:
             try:
                 s = datetime.fromisoformat(start_str)
-                e = datetime.fromisoformat(end_str)
+                if end_str:
+                    e = datetime.fromisoformat(end_str)
+                else:
+                    e = datetime.now()
+                    if e > week_end:
+                        e = week_end
                 
                 curr = s
                 while curr.date() < e.date():

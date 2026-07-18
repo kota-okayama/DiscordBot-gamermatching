@@ -3,6 +3,14 @@ import asyncio
 from dotenv import load_dotenv
 import discord
 from discord.ext import commands
+import builtins
+from datetime import datetime
+
+# 全ての print 出力にタイムスタンプを付与するためのオーバーライド
+original_print = builtins.print
+def timestamped_print(*args, **kwargs):
+    original_print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}]", *args, **kwargs)
+builtins.print = timestamped_print
 
 
 def load_token() -> str:
