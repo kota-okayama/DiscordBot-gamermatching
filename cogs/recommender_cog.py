@@ -6,6 +6,8 @@ import numpy as np
 import os
 import pickle
 
+from cogs.ui_constants import ICON_FIELD
+
 DB_PATH = 'data/game_history.db'
 
 # エンベディングのロード
@@ -117,7 +119,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
 
             if str(ctx.author.id) not in user_ids:
                 await ctx.send(embed=discord.Embed(
-                    title="📭 プレイ記録なし",
+                    title="プレイ記録なし",
                     description=f"過去{days}日間のプレイ記録が見つかりませんでした。",
                     color=discord.Color.orange()))
                 return
@@ -144,7 +146,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
             results.sort(key=lambda x: x[1], reverse=True)
 
             embed = discord.Embed(
-                title="👥 プレイスタイルが似ているプレイヤー",
+                title="プレイスタイルが似ているプレイヤー",
                 description=f"**{ctx.author.display_name}** さんとの類似度（過去{days}日）\nスコア = プレイタイトル30% ＋ 時間帯20% ＋ ジャンル・好み50%",
                 color=discord.Color.blue())
 
@@ -156,7 +158,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
                 pct = int(score * 100)
                 common_str = ', '.join(common[:5]) + (f' 他{len(common)-5}本' if len(common) > 5 else '')
                 embed.add_field(
-                    name=f"👤 {user.display_name}",
+                    name=f"{ICON_FIELD}{user.display_name}",
                     value=f"{_progress_bar(pct)} **{pct}%**\nタイトル一致:{int(sg*100)}% / 時間帯:{int(sh*100)}% / ジャンル・好み:{int(sc*100)}%\n共通: {common_str or 'なし'}",
                     inline=False)
                 shown += 1
@@ -184,7 +186,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
 
             if str(ctx.author.id) not in user_ids:
                 await ctx.send(embed=discord.Embed(
-                    title="📭 プレイ記録なし",
+                    title="プレイ記録なし",
                     description=f"過去{days}日間のプレイ記録が見つかりませんでした。",
                     color=discord.Color.orange()))
                 return
@@ -237,7 +239,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
             max_total = final_rec[0][1] if final_rec else 1
 
             embed = discord.Embed(
-                title="🎯 おすすめのゲーム",
+                title="おすすめのゲーム",
                 description=f"**{ctx.author.display_name}** さんへのハイブリッド推薦（過去{days}日）\nスコア = フレンドのプレイ状況50% ＋ ジャンルの一致度50%",
                 color=discord.Color.green())
 
@@ -255,7 +257,7 @@ class RecommenderCog(commands.Cog, name='Recommender'):
                     names += f' 他{len(players)-3}人'
                     
                 embed.add_field(
-                    name=f"🎮 {all_games[j]}",
+                    name=f"{ICON_FIELD}{all_games[j]}",
                     value=f"{_progress_bar(pct)} **{pct}%**\n流行度(CF): {int(cf*100)}% / ジャンル(CB): {int(max(0, cb)*100)}%\nプレイ中: {names or 'なし'}",
                     inline=False)
 
@@ -270,13 +272,13 @@ class RecommenderCog(commands.Cog, name='Recommender'):
     async def dummy_similar(self, ctx):
         """[ダミーデータ] 類似ユーザーを検索"""
         embed = discord.Embed(
-            title="👥 プレイスタイルが似ているプレイヤー",
+            title="プレイスタイルが似ているプレイヤー",
             description=f"**{ctx.author.display_name}** さんとの類似度（過去30日）\nスコア = ゲーム類似度×0.6 ＋ 時間帯類似度×0.4",
             color=discord.Color.blue())
         
-        embed.add_field(name="👤 kurara_ra", value=f"{_progress_bar(85)} **85%**\nゲーム:80% / 時間帯:92%\n共通: Valorant, Apex Legends", inline=False)
-        embed.add_field(name="👤 test_gamer", value=f"{_progress_bar(62)} **62%**\nゲーム:70% / 時間帯:50%\n共通: Minecraft", inline=False)
-        embed.add_field(name="👤 pro_player", value=f"{_progress_bar(45)} **45%**\nゲーム:30% / 時間帯:67%\n共通: Genshin Impact", inline=False)
+        embed.add_field(name=f"{ICON_FIELD}kurara_ra", value=f"{_progress_bar(85)} **85%**\nゲーム:80% / 時間帯:92%\n共通: Valorant, Apex Legends", inline=False)
+        embed.add_field(name=f"{ICON_FIELD}test_gamer", value=f"{_progress_bar(62)} **62%**\nゲーム:70% / 時間帯:50%\n共通: Minecraft", inline=False)
+        embed.add_field(name=f"{ICON_FIELD}pro_player", value=f"{_progress_bar(45)} **45%**\nゲーム:30% / 時間帯:67%\n共通: Genshin Impact", inline=False)
         
         embed.set_footer(text="コサイン類似度ベース（ダミーデータ）")
         await ctx.send(embed=embed)
@@ -285,13 +287,13 @@ class RecommenderCog(commands.Cog, name='Recommender'):
     async def dummy_recommend(self, ctx):
         """[ダミーデータ] ゲームを推薦"""
         embed = discord.Embed(
-            title="🎯 おすすめのゲーム",
+            title="おすすめのゲーム",
             description=f"**{ctx.author.display_name}** さんへのハイブリッド推薦（過去30日）\nスコア = フレンドのプレイ状況50% ＋ ジャンルの一致度50%",
             color=discord.Color.green())
             
-        embed.add_field(name="🎮 Escape from Tarkov", value=f"{_progress_bar(95)} **95%**\n流行度(CF): 80% / ジャンル(CB): 100%\nプレイ中: kurara_ra, test_gamer", inline=False)
-        embed.add_field(name="🎮 Overwatch 2", value=f"{_progress_bar(78)} **78%**\n流行度(CF): 90% / ジャンル(CB): 66%\nプレイ中: pro_player, user123", inline=False)
-        embed.add_field(name="🎮 League of Legends", value=f"{_progress_bar(52)} **52%**\n流行度(CF): 100% / ジャンル(CB): 4%\nプレイ中: kurara_ra", inline=False)
+        embed.add_field(name=f"{ICON_FIELD}Escape from Tarkov", value=f"{_progress_bar(95)} **95%**\n流行度(CF): 80% / ジャンル(CB): 100%\nプレイ中: kurara_ra, test_gamer", inline=False)
+        embed.add_field(name=f"{ICON_FIELD}Overwatch 2", value=f"{_progress_bar(78)} **78%**\n流行度(CF): 90% / ジャンル(CB): 66%\nプレイ中: pro_player, user123", inline=False)
+        embed.add_field(name=f"{ICON_FIELD}League of Legends", value=f"{_progress_bar(52)} **52%**\n流行度(CF): 100% / ジャンル(CB): 4%\nプレイ中: kurara_ra", inline=False)
         
         embed.set_footer(text="ハイブリッド推薦（ダミーデータ）")
         await ctx.send(embed=embed)

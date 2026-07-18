@@ -5,6 +5,8 @@ import sqlite3
 from datetime import datetime
 import pandas as pd
 
+from cogs.ui_constants import LOG_CLEAN, LOG_GAME, LOG_OK, LOG_SAVE, LOG_STOP
+
 DB_PATH = 'data/game_history.db'
 
 
@@ -24,7 +26,7 @@ class HistoryCog(commands.Cog, name='History'):
         )''')
         conn.commit()
         conn.close()
-        print("✅ HistoryCog: DBテーブル初期化完了")
+        print(f"{LOG_OK} HistoryCog: DBテーブル初期化完了")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -64,7 +66,7 @@ class HistoryCog(commands.Cog, name='History'):
             if key in db_active:
                 # 既にDBにNULLで存在するので継続
                 self.active_sessions[(member.id, activity.name)] = db_active[key]
-                print(f"🎮 [復元] ゲームプレイ継続中: {member.name} - {activity.name}")
+                print(f"{LOG_GAME} [復元] ゲームプレイ継続中: {member.name} - {activity.name}")
                 del db_active[key]
             else:
                 # 新規開始
@@ -79,7 +81,7 @@ class HistoryCog(commands.Cog, name='History'):
                     'id': c.lastrowid,
                     'details': details
                 }
-                print(f"🎮 [新規] ゲームプレイ開始: {member.name} - {activity.name}")
+                print(f"{LOG_GAME} [新規] ゲームプレイ開始: {member.name} - {activity.name}")
 
         # 4. DBにはNULLで残っているが、現在はもうプレイしていないセッションを閉じる
         for key, session_data in db_active.items():
@@ -89,16 +91,16 @@ class HistoryCog(commands.Cog, name='History'):
                 SET end_time=?, duration=?
                 WHERE id=?
             ''', (now.isoformat(), duration, session_data['id']))
-            print(f"🧹 [クリーンアップ] オフライン中に終了: {key[0]} - {key[1]} ({duration}秒)")
+            print(f"{LOG_CLEAN} [クリーンアップ] オフライン中に終了: {key[0]} - {key[1]} ({duration}秒)")
             
         conn.commit()
         conn.close()
-        print("✅ HistoryCog: 起動時セッション処理完了")
+        print(f"{LOG_OK} HistoryCog: 起動時セッション処理完了")
 
     async def cog_unload(self):
         # 以前のように強制的にend_timeを書き込む処理は廃止。
         # DB上はNULLのまま残し、次回on_readyで復元またはクリーンアップする。
-        print("🛑 HistoryCog: 終了（セッション状態はDBに保持）")
+        print(f"{LOG_STOP} HistoryCog: 終了（セッション状態はDBに保持）")
 
     # ── プレゼンス監視（ゲームセッション記録） ─────────
     @commands.Cog.listener()
@@ -129,7 +131,7 @@ class HistoryCog(commands.Cog, name='History'):
                             'details': details
                         }
                         conn.close()
-                        print(f"🎮 ゲーム開始: {after.name} - {activity.name}")
+                        print(f"{LOG_GAME} ゲーム開始: {after.name} - {activity.name}")
 
         # ゲーム終了
         if before.activities:
@@ -151,7 +153,7 @@ class HistoryCog(commands.Cog, name='History'):
                     ''', (end_time.isoformat(), duration, session['id']))
                     conn.commit()
                     conn.close()
-                    print(f"💾 ゲーム終了: {before.name} - {activity.name} ({duration}秒)")
+                    print(f"{LOG_SAVE} ゲーム終了: {before.name} - {activity.name} ({duration}秒)")
 
     # ── コマンド ──────────────────────────────────────
     @commands.command(name='history')

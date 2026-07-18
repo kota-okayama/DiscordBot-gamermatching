@@ -8,6 +8,8 @@ matplotlib.use('Agg')  # GUIなし環境向け
 import matplotlib.pyplot as plt
 import io
 
+from cogs.ui_constants import ICON_BULLET, ICON_FIELD
+
 DB_PATH = 'data/game_history.db'
 
 
@@ -24,20 +26,20 @@ class ProfileCog(commands.Cog, name='Profile'):
 
         if not profile:
             await ctx.send(embed=discord.Embed(
-                title="😅 プロフィールなし",
+                title="プロフィールなし",
                 description="プレイ記録が見つかりませんでした。",
                 color=discord.Color.orange()))
             return
 
         embed = discord.Embed(
-            title=f"📊 {target.display_name} のゲームプロフィール",
+            title=f"{target.display_name} のゲームプロフィール",
             color=discord.Color.purple())
 
         favs = '\n'.join(
-            f"🎮 {game}: {dur/3600:.1f}時間"
+            f"{ICON_BULLET}{game}: {dur/3600:.1f}時間"
             for game, dur in profile['favorites']
         ) or 'データなし'
-        embed.add_field(name="🏆 お気に入りゲーム", value=favs, inline=False)
+        embed.add_field(name=f"{ICON_FIELD}お気に入りゲーム", value=favs, inline=False)
 
         if profile['hours']:
             fig, ax = plt.subplots(figsize=(10, 4))
@@ -87,16 +89,16 @@ class ProfileCog(commands.Cog, name='Profile'):
     async def dummy_profile(self, ctx):
         """[ダミーデータ] プロフィールを表示"""
         embed = discord.Embed(
-            title=f"📊 {ctx.author.display_name} のゲームプロフィール [ダミーデータ]",
+            title=f"{ctx.author.display_name} のゲームプロフィール [ダミーデータ]",
             color=discord.Color.purple())
 
         favs = (
-            "🎮 Valorant: 120.5時間\n"
-            "🎮 Apex Legends: 85.0時間\n"
-            "🎮 Minecraft: 40.2時間\n"
-            "🎮 Genshin Impact: 25.0時間"
+            f"{ICON_BULLET}Valorant: 120.5時間\n"
+            f"{ICON_BULLET}Apex Legends: 85.0時間\n"
+            f"{ICON_BULLET}Minecraft: 40.2時間\n"
+            f"{ICON_BULLET}Genshin Impact: 25.0時間"
         )
-        embed.add_field(name="🏆 お気に入りゲーム", value=favs, inline=False)
+        embed.add_field(name=f"{ICON_FIELD}お気に入りゲーム", value=favs, inline=False)
 
         fig, ax = plt.subplots(figsize=(10, 4))
         hours  = [18, 20, 22, 0, 2, 14, 16]
