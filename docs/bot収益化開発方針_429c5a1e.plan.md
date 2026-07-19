@@ -3,10 +3,10 @@ name: Bot収益化開発方針
 overview: 「新しい通話相手の発見」「週間リキャップ」「ストアページ連携」「データ駆動LFG」の4機能でサービス価値とユーザー数を伸ばすための開発方針。収益化はその後段として維持。
 todos:
   - id: discover-command
-    content: "/discover 実装（VC通話実績のない相性上位ユーザーを推薦、!similarには通話実績バッジ追加）"
-    status: pending
+    content: "/discover 実装（VC通話実績のない相性上位ユーザーを推薦、!similarには通話実績バッジ追加）。除外閾値は累計100分。バッジは Discord サブテキスト（-#）でグレー表示"
+    status: completed
   - id: avatar-ui
-    content: "推薦結果UIを Components V2 へ（similar 実装済み）。詳細セレクトは差し替え表示＋期限切れ時「操作可能時間を過ぎました」へ改修予定。discover 共通化は残"
+    content: "推薦結果UIを Components V2 へ（similar / discover / dummy_* 共通 LayoutView）。詳細セレクトは差し替え表示＋期限切れ時「操作可能時間を過ぎました」"
     status: completed
   - id: similar-select-replace
     content: "「詳細を見る」を差し替え表示にし、timeout後は一律「操作可能時間を過ぎました」と返す"
@@ -70,12 +70,13 @@ isProject: false
 
 **課題認識**：現状の `!similar` は、VCで既に通話したことがある「実質友達」を上位に出しがちで、マッチングとしての新規性がない。VC共同参加データは将来のML用GTとして収集を継続しつつ、当面は**除外フィルタ**として使う。
 
-**`/discover`（新しい通話相手探し）コマンドを新設**（recommender_cog.py に追加）:
+**`/discover`（新しい通話相手探し）コマンドを新設（実装済み）**（`cogs/recommender_cog.py`）:
 
 - スコア計算は既存の `!similar` と同一（タイトル30% + 時間帯20% + 嗜好50%）。
-- ただし `voice_co_sessions` に通話実績があるペアを除外（または通話時間に応じて減衰）。閾値は「累計通話 N 分以上は既知の仲」とし、まずは N=10 程度から調整。
-- 結果には「なぜこの人か」（共通タイトル・嗜好一致率）に加え、共通でプレイしているマルチプレイ対応ゲームを強調表示（誘うきっかけを提供）。
-- 逆に既存の `!similar` には「通話実績あり（累計X時間）」バッジを付け、known/new の区別を可視化する。
+- `voice_co_sessions` の累計通話が **100分以上** のペアを除外（既知の仲）。定数: `KNOWN_VC_SECONDS = 100 * 60`。
+- 結果には「なぜこの人か」（共通タイトル・嗜好一致率）に加え、共通のマルチプレイ対応ゲームを「誘える:」行で表示。
+- 既存の `!similar` には「通話実績あり（累計X時間）」バッジを付与。本文より目立たせないよう Discord サブテキスト（`-#`）でグレー表示する。
+- 表示確認用: `!dummy_discover` / `!dummy_similar`（DB非依存）。
 
 **結果表示のUI（決定事項・方法2: Components V2）**：
 
