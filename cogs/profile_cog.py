@@ -18,21 +18,14 @@ class ProfileCog(commands.Cog, name='Profile'):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.command(name='profile')
-    async def show_profile(self, ctx, member: discord.Member = None):
-        """ゲームプロフィールを表示"""
-        target = member or ctx.author
-        profile = self._get_profile(target.id)
-
+    async def build_profile_message(self, user_id: int, display_name: str) -> tuple[discord.Embed | None, discord.File | None]:
+        """プロフィール embed と時間帯グラフ File を生成する（記録なしの場合は (None, None)）"""
+        profile = self._get_profile(user_id)
         if not profile:
-            await ctx.send(embed=discord.Embed(
-                title="プロフィールなし",
-                description="プレイ記録が見つかりませんでした。",
-                color=discord.Color.orange()))
-            return
+            return None, None
 
         embed = discord.Embed(
-            title=f"{target.display_name} のゲームプロフィール",
+            title=f"{display_name} のゲームプロフィール",
             color=discord.Color.purple())
 
         favs = '\n'.join(
@@ -61,6 +54,24 @@ class ProfileCog(commands.Cog, name='Profile'):
 
             file = discord.File(buf, filename='profile.png')
             embed.set_image(url='attachment://profile.png')
+            return embed, file
+
+        return embed, None
+
+    @commands.command(name='profile')
+    async def show_profile(self, ctx, member: discord.Member = None):
+        """ゲームプロフィールを表示"""
+        target = member or ctx.author
+        embed, file = await self.build_profile_message(target.id, target.display_name)
+
+        if embed is None:
+            await ctx.send(embed=discord.Embed(
+                title="プロフィールなし",
+                description="プレイ記録が見つかりませんでした。",
+                color=discord.Color.orange()))
+            return
+
+        if file:
             await ctx.send(file=file, embed=embed)
         else:
             await ctx.send(embed=embed)

@@ -1,0 +1,184 @@
+---
+name: Bot収益化開発方針
+overview: 「新しい通話相手の発見」「週間リキャップ」「ストアページ連携」「データ駆動LFG」の4機能でサービス価値とユーザー数を伸ばすための開発方針。収益化はその後段として維持。
+todos:
+  - id: discover-command
+    content: "/discover 実装（VC通話実績のない相性上位ユーザーを推薦、!similarには通話実績バッジ追加）"
+    status: pending
+  - id: avatar-ui
+    content: "推薦結果UIを Components V2 へ（similar 実装済み）。詳細セレクトは差し替え表示＋期限切れ時「操作可能時間を過ぎました」へ改修予定。discover 共通化は残"
+    status: completed
+  - id: similar-select-replace
+    content: "「詳細を見る」を差し替え表示にし、timeout後は一律「操作可能時間を過ぎました」と返す"
+    status: completed
+  - id: game-metadata-db
+    content: filtered_games_data_final.json を game_metadata テーブルに取り込み（appid・画像・カテゴリ・説明）
+    status: pending
+  - id: store-links
+    content: "/game コマンドと recommend/top embed へのストアリンク・ヘッダー画像の組み込み"
+    status: pending
+  - id: recap-image
+    content: 週間リキャップ画像の生成処理（calendar_cog の描画資産を流用）
+    status: pending
+  - id: recap-scheduler
+    content: リキャップの自動投稿（tasks.loop で毎週月曜、サーバーごとに投稿チャンネル設定）
+    status: pending
+  - id: lfg-core
+    content: "/lfg 実装（募集パネル＋参加ボタン＋データ駆動のターゲット通知）"
+    status: pending
+  - id: lfg-optin
+    content: LFG通知のオプトイン設定と頻度制限（notification_prefs テーブル）
+    status: pending
+  - id: agents-rules
+    content: Botリポジトリに AGENTS.md（特殊仕様・禁止事項・検証手順）を作成し、委任先モデルに常時読ませる
+    status: completed
+  - id: ui-symbols
+    content: "ui_constants.py 集約済み。タイトル記号削除／フィールドは▸・•／ログは[OK]等ブラケットタグへ改善"
+    status: completed
+  - id: monetize-later
+    content: 後段：寄付導線・Bot一覧サイト登録・optout等の公開整備（旧プランのPhase 1〜2を縮約）
+    status: pending
+isProject: false
+---
+
+# ゲーマーマッチングBot サービス改善・ユーザー増加方針
+
+## 方針の転換
+
+当初の課金導線優先から、「サービスの魅力を上げてユーザー（導入サーバー）を増やす」ことを主軸に変更する。収益化（寄付導線・Bot一覧サイト登録・プライバシー整備）は後段フェーズとして残す。
+
+ユーザーからのフィードバックで確定した4本柱：
+
+1. **新しい通話相手を探すコマンド**（VC共同参加データの「逆」活用）
+2. **週間リキャップ**（共有されやすい画像で認知拡大）
+3. **未知のゲームのストアページ連携**（発見体験の強化）
+4. **LFG機能**（ロールメンションとの差別化が焦点）
+
+## 確認済みの技術的裏付け
+
+- `GameEmbeddingData/LOD-multiplay-game/filtered_games_data_final.json`（6,400件）に `steam_appid`・`header_image`・`categories`（「マルチプレイヤー」タグ含む）・`description`・`price` が揃っている。ストア連携とマルチプレイ判定は**既存データのみで実装可能**。
+- `voice_co_sessions` テーブル（tracker_cog.py）に通話ペアと通話時間が蓄積済み。「通話したことがあるか」の判定は SELECT 一発で可能。
+- 環境の `discord.py` は 2.6+（Components V2: `ui.LayoutView` / `ui.Section` / `ui.Thumbnail`）。要件は `discord.py>=2.6.0`。
+
+## コーディング規約（エージェント向け）
+
+- ユーザーへの説明は日本語
+- コードのコメント・変数名・関数名は英語
+- Discord / discord.py の仕様は原文ドキュメントを優先（要約記事より changelog・公式 API を参照）
+
+## Phase 1: 新しい通話相手の発見（最優先・実装コスト小）
+
+**課題認識**：現状の `!similar` は、VCで既に通話したことがある「実質友達」を上位に出しがちで、マッチングとしての新規性がない。VC共同参加データは将来のML用GTとして収集を継続しつつ、当面は**除外フィルタ**として使う。
+
+**`/discover`（新しい通話相手探し）コマンドを新設**（recommender_cog.py に追加）:
+
+- スコア計算は既存の `!similar` と同一（タイトル30% + 時間帯20% + 嗜好50%）。
+- ただし `voice_co_sessions` に通話実績があるペアを除外（または通話時間に応じて減衰）。閾値は「累計通話 N 分以上は既知の仲」とし、まずは N=10 程度から調整。
+- 結果には「なぜこの人か」（共通タイトル・嗜好一致率）に加え、共通でプレイしているマルチプレイ対応ゲームを強調表示（誘うきっかけを提供）。
+- 逆に既存の `!similar` には「通話実績あり（累計X時間）」バッジを付け、known/new の区別を可視化する。
+
+**結果表示のUI（決定事項・方法2: Components V2）**：
+
+参考（原文）:
+
+- discord.py 2.6 changelog: Components V2 / `ui.LayoutView`
+- https://about.abstractumbra.dev/discord.py/2025/08/17/components-v2.html
+
+実装方針:
+
+- `discord.ui.LayoutView` + `Container`（accent_color）内に、プレイヤー1人あたり `Section`（本文 + `Thumbnail(user.display_avatar.url)`）
+- LayoutView メッセージでは `content` / `embeds` を送れない（Components V2 の制約）。テキストは `TextDisplay` に置く
+- Discord プロフィール誘導: Section 本文に `<@user_id>` を含める。TextDisplay のメンションはデフォルトで ping するため、送信時に必ず `allowed_mentions=discord.AllowedMentions.none()` を付ける
+- Bot プロフィール誘導: `ActionRow` + `Select`「詳細を見る」で `ProfileCog.build_profile_message` を表示（従来の embed 可）
+- 表示ビルダーを `!similar` / `/discover` / `dummy_similar` で共通化する
+- 以前検討した PIL ランキング画像案は採用しない（クリック不可・描画コスト大）。ブランチ上の試作があれば Components V2 に置き換える
+
+**「詳細を見る」セレクトの操作仕様（実装済み）**：
+
+- **差し替え表示**: ユーザーを選ぶたびに、直前に出した詳細（Botプロフィール）を**上書き・差し替え**する。ephemeral を積み上げない
+  - 初回: `interaction.response.send_message(..., ephemeral=True)` → `detail_message` を保持
+  - 2回目以降: `defer` のあと `detail_message.edit(...)`（失敗時のみ followup で新規）
+- **操作期限切れ**: LayoutView timeout（180 秒）後はセレクトを無効化し placeholder を  
+  **「操作可能時間を過ぎました」** に変更。期限後の interaction にも同文を ephemeral で返す
+- チャンネルの他メンバーには詳細は見えない（ephemeral のまま）
+
+進行中セッションを扱うSQLでは `end_time IS NULL` を必ず考慮する（既存設計の維持）。
+
+## Phase 2: ゲームストアページ連携（実装コスト小〜中）
+
+**狙い**：サーバーの知り合いが全然知らないゲームを遊んでいるとき、その場でストアページに飛べる導線を作る。「知らないゲームとの出会い」を体験価値にする。
+
+- `filtered_games_data_final.json` を `data/game_metadata` テーブル（game_name, steam_appid, header_image, genres, categories, description, price）としてSQLiteに取り込むスクリプトを scripts/ に追加。
+- ゲーム名のマッチングは「完全一致 → 正規化一致（™®の除去・小文字化）」の2段階。エンベディングのキーと同じSteamタイトル由来なので大半は一致する想定。
+- 追加する導線：
+  - `/game <ゲーム名>` : ヘッダー画像・ジャンル・価格・説明つきのゲーム情報カードと `https://store.steampowered.com/app/<appid>` リンクを表示。ゲーム名は現在サーバー内でプレイ記録があるものからオートコンプリート。
+  - `!recommend` / `!top` の結果embedの各ゲームにストアリンクを付与（embedのフィールド値はMarkdownリンク可）。
+  - 将来的に「プロフィール/カレンダーのゲームアイコン描画」（既存 plan.md 案）もこのテーブルの `header_image` を流用。
+
+## Phase 3: 週間リキャップ（バイラル経路）
+
+- 毎週月曜朝に「先週のプレイ総時間 / トップゲーム / 最も活動的な時間帯 / 今週の相性No.1（新しい相手）」を1枚画像で自動投稿。
+- 画像生成は calendar_cog.py の描画資産（フォント読み込み・角丸描画・カラー生成）を共通モジュールに切り出して流用。
+- 実装は `recap_cog.py` を新設し、`discord.ext.tasks.loop` で定期実行。サーバーごとに投稿チャンネルを `/recap setup #channel` で設定（未設定サーバーには投稿しない）。
+- 個人向けリキャップはDMではなく本人がコマンド実行（`/recap me`）で取得（DM自動送信はスパム感が強いため）。
+- ストア連携（Phase 2）のゲームヘッダー画像を使うとリッチになるため、Phase 2 の後に実装する。
+
+## Phase 4: LFG（ロールメンションとの差別化が焦点）
+
+既存の「@FPS勢 やる人〜」というロールメンション文化に対する差別化ポイントを明確にする：
+
+- **ターゲティング**：全員にpingするのではなく、「そのゲーム（または嗜好が近いゲーム）のプレイヤー」かつ「その時間帯にアクティブな実績がある」ユーザーだけに通知。データを持っているこのBotにしかできない絞り込み。
+- **募集パネル**：`/lfg <ゲーム> <時刻> <人数>` で参加ボタン付きの募集パネルを投稿。埋まり状況（2/5人）をリアルタイム更新し、時刻超過で自動クローズ。ロールメンションでは追えない「誰が来るか」を構造化する。
+- **オプトイン制＋頻度制限**：通知は `/lfg-notify on` したユーザーのみ・1日N回まで。`notification_prefs` テーブルを新設。スパム化した瞬間に死ぬ機能なのでここは厳格に。
+- 将来拡張：相性の高いユーザーが共通ゲームを起動した瞬間の「今誘えます」通知（Phase 1 のdiscoverロジックを流用）。
+
+## UI方針（決定事項）
+
+- 絵文字は当面 **Unicode記号に統一**し `cogs/ui_constants.py` に集約（実装済み）。改善方針：
+  - embedタイトルからは記号を削除（カラーで区別）
+  - フィールド名は `▸ `、リスト項目は `• ` で統一
+  - ログ（print）は記号ではなく `[OK]` `[GAME]` `[VC]` 等のブラケットタグ
+  - カレンダー画像ヘッダーはテキストのみ（PILはカラー絵文字非対応）
+- 推薦結果（similar/discover）は **Components V2（LayoutView + Section + Thumbnail）**（上記 Phase 1）
+- 余裕ができたらアプリ所有絵文字へ差し替え可能（定数モジュール経由）
+
+## 実装委任（別モデル）の運用ルール
+
+コスト節約のため実装は別モデルに依頼する。品質を保つための取り決め：
+
+1. **リポジトリ直下に `AGENTS.md` を作成**し、以下を明記（委任先が毎回自動で読む前提知識）：
+   - 進行中セッションは `end_time IS NULL` で表現される。セッションを扱うSQLは必ずこのケースを含めること
+   - ログは `main.py` の `builtins.print` オーバーライド頼み。Cog内で独自ロガーを設定しないこと
+   - デプロイは `docker build -t matching-bot:latest .` → `docker service update`（共用サーバーのためroot直インストール禁止、実行はpython3）
+   - **禁止事項**：既存テーブルのスキーマ変更、`tracker_cog.py` の収集ロジック変更（ML用GTの連続性を壊すため）、依頼範囲外のリファクタ
+2. **1タスク=1セッション**で依頼する。本プランのtodo単位がそのまま依頼単位。長い会話を引きずらない
+3. 依頼文の定型：目的 / 編集してよいファイル / 新規テーブルのスキーマ / 受け入れ条件 / 禁止事項
+4. **既存コードの模倣を指示**する（「`history_cog.py` と同じスタイルで」）。動作確認用に既存の `dummy_*` コマンドのパターンを踏襲させる
+5. 完了条件に検証を含める：`scripts/seed_test_data.py` でのデータ投入、`dummy_*` コマンドでの表示確認、docker build の成功
+6. 機能ごとにgitブランチを切らせ、失敗したら破棄できるようにする
+
+## 後段: 公開整備と収益化（旧プランの縮約）
+
+機能が揃った段階で実施：
+
+- `!optout`/`!optin`（プライバシー対応）、`!d_calendar` のオーナー限定化、`on_guild_join` での収集通知
+- 主要コマンドのスラッシュコマンド化（LFG・discover は最初からスラッシュコマンドで実装するので、残りは calendar/similar 等の移行のみ）
+- Ko-fi 等の寄付導線（`!donate`）、Top.gg 登録、Zenn/note 解説記事
+- SQLite WALモード有効化
+
+## デプロイ・運用ルール（既存仕様の遵守）
+
+- 変更のたびに `docker build -t matching-bot:latest .` → `docker service update` で反映（共用サーバーのためDocker必須、rootインストール不可）。
+- ログは `main.py` の `builtins.print` オーバーライドに乗せる（Cog内で独自ロガー不要）。
+- 進行中セッションを扱うSQLでは必ず `end_time IS NULL` を考慮する。
+- VC共同参加データは将来のMLマッチングのGTなので、スキーマ変更時も収集の連続性を壊さないこと。
+
+## テンプレート
+
+AGENTS.md を読んでから作業してください。
+【目的】表示用記号の定数モジュール化。cogs/ui_constants.py を新規作成し、
+各Cogに直書きされた絵文字（🎮📊👥等）をUnicode記号（▸●◆等）の定数参照に置き換える
+【編集してよいファイル】cogs/ 配下の全Cogと新規 ui_constants.py
+【受け入れ条件】全コマンドの表示から絵文字が消え記号になる / ロジックは一切変えない /
+docker build -t matching-bot:latest . && docker service update --force matching-bot-stack_matching-botが成功する
+【禁止】SQL・スコア計算・収集ロジックの変更
