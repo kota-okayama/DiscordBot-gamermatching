@@ -35,6 +35,9 @@ todos:
   - id: ui-symbols
     content: "ui_constants.py 集約済み。タイトル記号削除／フィールドは▸・•／ログは[OK]等ブラケットタグへ改善"
     status: completed
+  - id: slash-migrate
+    content: "既存の !コマンド（similar / recommend / calendar / profile / history 等）を /スラッシュコマンドでも実行できるようにする（hybrid または app_commands 化。discover / LFG は最初からスラッシュ）"
+    status: pending
   - id: monetize-later
     content: 後段：寄付導線・Bot一覧サイト登録・optout等の公開整備（旧プランのPhase 1〜2を縮約）
     status: pending
@@ -163,7 +166,7 @@ isProject: false
 機能が揃った段階で実施：
 
 - `!optout`/`!optin`（プライバシー対応）、`!d_calendar` のオーナー限定化、`on_guild_join` での収集通知
-- 主要コマンドのスラッシュコマンド化（LFG・discover は最初からスラッシュコマンドで実装するので、残りは calendar/similar 等の移行のみ）
+- 主要コマンドのスラッシュコマンド化（todo: `slash-migrate`）。LFG・discover は最初からスラッシュ。残り（`!similar` / `!recommend` / `!calendar` / `!profile` / `!history` 等）も `/` で実行できるようにする
 - Ko-fi 等の寄付導線（`!donate`）、Top.gg 登録、Zenn/note 解説記事
 - SQLite WALモード有効化
 
