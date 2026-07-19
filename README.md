@@ -133,11 +133,12 @@ docker service update --force matching-bot-stack_matching-bot
 
 | コマンド | 説明 | 例 |
 |---------|-----|---|
-| `!similar [日数]` | 類似ユーザーを検索 | `!similar 30` |
+| `!similar [日数]` | 類似ユーザーを検索（通話実績バッジ付き） | `!similar 30` |
+| `/discover [日数]` | 新しい通話相手を探す（累計通話100分以上は除外） | `/discover` |
 | `!recommend` | ゲーム推薦を取得 | `!recommend` |
-| `!stats` | プレイ統計を表示 | `!stats` |
 | `!profile` | プロフィールを表示 | `!profile @username` |
-| `!calendar` | ゲームイベント表示 | `!calendar` |
+| `!calendar` | プレイカレンダー画像を表示 | `!calendar` |
+| `!dummy_similar` / `!dummy_discover` | 推薦UIの表示確認（DB非依存） | `!dummy_discover` |
 
 ### 機能の詳細
 
@@ -145,11 +146,19 @@ docker service update --force matching-bot-stack_matching-bot
 ```
 !similar 30
 ```
-- 過去30日間のプレイ履歴を比較
-- Jaccard係数による類似度計算
-- 共通ゲーム数とプレイ時間を考慮
+- 過去30日間のプレイ履歴を比較（タイトル30% + 時間帯20% + 嗜好50%）
+- Components V2（アバター付き）で表示
+- VC通話実績がある相手には控えめなグレーの「通話実績あり」表示
 
-#### 2. ゲーム推薦
+#### 2. 新しい通話相手探し
+```
+/discover
+```
+- `!similar` と同じスコア計算
+- 累計通話 **100分以上** の相手は除外し、まだあまり話していない相性上位を表示
+- 共通のマルチプレイゲームを「誘える:」として提示
+
+#### 3. ゲーム推薦
 ```
 !recommend
 ```
@@ -157,7 +166,7 @@ docker service update --force matching-bot-stack_matching-bot
 - まだプレイしていないゲームを優先表示
 - 人気度とマッチング度でランキング
 
-#### 3. 統計表示
+#### 4. 統計表示
 ```
 !stats
 ```
