@@ -5,3 +5,4 @@ __pycache__/
 *.pyc
 plan.md
 AGENTS.md
+docs/*

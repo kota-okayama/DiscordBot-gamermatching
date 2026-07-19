@@ -5,6 +5,10 @@ from datetime import datetime
 from typing import Optional
 import sqlite3
 
+from cogs.ui_constants import (
+    LOG_GAME, LOG_MENTION, LOG_OK, LOG_SAVE, LOG_STOP, LOG_VC,
+)
+
 DB_PATH = 'data/game_history.db'
 
 
@@ -41,7 +45,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
         )''')
         conn.commit()
         conn.close()
-        print("✅ TrackerCog: DBテーブル初期化完了")
+        print(f"{LOG_OK} TrackerCog: DBテーブル初期化完了")
 
     @commands.Cog.listener()
     async def on_ready(self):
@@ -60,7 +64,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
                                 'start_time': now,
                                 'channel_name': vc.name
                             }
-                            print(f"🎙️ [初期スキャン] VC共同参加を検出: {m1.name}↔{m2.name} in #{vc.name}")
+                            print(f"{LOG_VC} [初期スキャン] VC共同参加を検出: {m1.name}↔{m2.name} in #{vc.name}")
             
             # 2. 既存のパーティセッションをスキャン
             for member in guild.members:
@@ -82,11 +86,11 @@ class TrackerCog(commands.Cog, name='Tracker'):
                                       size[0] if size else None,
                                       size[1] if size else None,
                                       now.isoformat()))
-                                print(f"🎮 [初期スキャン] パーティ参加を検出: {member.name} → {act.name}")
+                                print(f"{LOG_GAME} [初期スキャン] パーティ参加を検出: {member.name} → {act.name}")
         
         conn.commit()
         conn.close()
-        print("✅ TrackerCog: 初期スキャン完了")
+        print(f"{LOG_OK} TrackerCog: 初期スキャン完了")
 
     async def cog_unload(self):
         now = datetime.now()
@@ -112,7 +116,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
         
         conn.commit()
         conn.close()
-        print("🛑 TrackerCog: 終了時データ保存完了")
+        print(f"{LOG_STOP} TrackerCog: 終了時データ保存完了")
 
     # ── ヘルパー ───────────────────────────────────────
     def _get_game_name(self, member: discord.Member) -> Optional[str]:
@@ -146,7 +150,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
                         'start_time': now,
                         'channel_name': after.channel.name,
                     }
-            print(f"🎙️ VCに参加: {member.name} → #{after.channel.name}")
+            print(f"{LOG_VC} VCに参加: {member.name} → #{after.channel.name}")
 
         # 退出
         if before.channel and before.channel != after.channel:
@@ -175,7 +179,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
                 ))
                 conn.commit()
                 conn.close()
-                print(f"💾 VC共同セッション記録: {id_a}↔{id_b} ({duration}秒)")
+                print(f"{LOG_SAVE} VC共同セッション記録: {id_a}↔{id_b} ({duration}秒)")
 
     # ── イベント: プレゼンス（Party ID） ──────────────
     @commands.Cog.listener()
@@ -215,7 +219,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
                       now.isoformat()))
                 conn.commit()
                 conn.close()
-                print(f"🎮 パーティ参加: {after.name} → {act.name} (party={pid})")
+                print(f"{LOG_GAME} パーティ参加: {after.name} → {act.name} (party={pid})")
 
         for pid in before_parties:
             if pid not in after_parties:
@@ -242,7 +246,7 @@ class TrackerCog(commands.Cog, name='Tracker'):
                 INSERT INTO mention_logs (from_user_id, to_user_id, channel_id, timestamp)
                 VALUES (?, ?, ?, ?)
             ''', (str(message.author.id), str(mentioned.id), str(message.channel.id), now))
-            print(f"📢 メンション記録: {message.author.name} → {mentioned.name}")
+            print(f"{LOG_MENTION} メンション記録: {message.author.name} → {mentioned.name}")
         conn.commit()
         conn.close()
 

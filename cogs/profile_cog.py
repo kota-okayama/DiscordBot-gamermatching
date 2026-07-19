@@ -8,6 +8,8 @@ matplotlib.use('Agg')  # GUIなし環境向け
 import matplotlib.pyplot as plt
 import io
 
+from cogs.ui_constants import ICON_BULLET, ICON_FIELD
+
 DB_PATH = 'data/game_history.db'
 
 
@@ -16,28 +18,21 @@ class ProfileCog(commands.Cog, name='Profile'):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
-    @commands.command(name='profile')
-    async def show_profile(self, ctx, member: discord.Member = None):
-        """ゲームプロフィールを表示"""
-        target = member or ctx.author
-        profile = self._get_profile(target.id)
-
+    async def build_profile_message(self, user_id: int, display_name: str) -> tuple[discord.Embed | None, discord.File | None]:
+        """プロフィール embed と時間帯グラフ File を生成する（記録なしの場合は (None, None)）"""
+        profile = self._get_profile(user_id)
         if not profile:
-            await ctx.send(embed=discord.Embed(
-                title="😅 プロフィールなし",
-                description="プレイ記録が見つかりませんでした。",
-                color=discord.Color.orange()))
-            return
+            return None, None
 
         embed = discord.Embed(
-            title=f"📊 {target.display_name} のゲームプロフィール",
+            title=f"{display_name} のゲームプロフィール",
             color=discord.Color.purple())
 
         favs = '\n'.join(
-            f"🎮 {game}: {dur/3600:.1f}時間"
+            f"{ICON_BULLET}{game}: {dur/3600:.1f}時間"
             for game, dur in profile['favorites']
         ) or 'データなし'
-        embed.add_field(name="🏆 お気に入りゲーム", value=favs, inline=False)
+        embed.add_field(name=f"{ICON_FIELD}お気に入りゲーム", value=favs, inline=False)
 
         if profile['hours']:
             fig, ax = plt.subplots(figsize=(10, 4))
@@ -59,6 +54,24 @@ class ProfileCog(commands.Cog, name='Profile'):
 
             file = discord.File(buf, filename='profile.png')
             embed.set_image(url='attachment://profile.png')
+            return embed, file
+
+        return embed, None
+
+    @commands.command(name='profile')
+    async def show_profile(self, ctx, member: discord.Member = None):
+        """ゲームプロフィールを表示"""
+        target = member or ctx.author
+        embed, file = await self.build_profile_message(target.id, target.display_name)
+
+        if embed is None:
+            await ctx.send(embed=discord.Embed(
+                title="プロフィールなし",
+                description="プレイ記録が見つかりませんでした。",
+                color=discord.Color.orange()))
+            return
+
+        if file:
             await ctx.send(file=file, embed=embed)
         else:
             await ctx.send(embed=embed)
@@ -87,16 +100,16 @@ class ProfileCog(commands.Cog, name='Profile'):
     async def dummy_profile(self, ctx):
         """[ダミーデータ] プロフィールを表示"""
         embed = discord.Embed(
-            title=f"📊 {ctx.author.display_name} のゲームプロフィール [ダミーデータ]",
+            title=f"{ctx.author.display_name} のゲームプロフィール [ダミーデータ]",
             color=discord.Color.purple())
 
         favs = (
-            "🎮 Valorant: 120.5時間\n"
-            "🎮 Apex Legends: 85.0時間\n"
-            "🎮 Minecraft: 40.2時間\n"
-            "🎮 Genshin Impact: 25.0時間"
+            f"{ICON_BULLET}Valorant: 120.5時間\n"
+            f"{ICON_BULLET}Apex Legends: 85.0時間\n"
+            f"{ICON_BULLET}Minecraft: 40.2時間\n"
+            f"{ICON_BULLET}Genshin Impact: 25.0時間"
         )
-        embed.add_field(name="🏆 お気に入りゲーム", value=favs, inline=False)
+        embed.add_field(name=f"{ICON_FIELD}お気に入りゲーム", value=favs, inline=False)
 
         fig, ax = plt.subplots(figsize=(10, 4))
         hours  = [18, 20, 22, 0, 2, 14, 16]

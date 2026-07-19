@@ -51,7 +51,7 @@ class CalendarCog(commands.Cog, name='Calendar'):
 
             if not sessions:
                 await ctx.send(embed=discord.Embed(
-                    title="📅 プレイ記録なし",
+                    title="プレイ記録なし",
                     description=f"{period} のプレイ記録が見つかりませんでした。",
                     color=discord.Color.orange()))
                 return
@@ -61,7 +61,7 @@ class CalendarCog(commands.Cog, name='Calendar'):
                 img.save(buf, 'PNG')
                 buf.seek(0)
                 await ctx.send(
-                    f"🎮 **{ctx.author.display_name}** のカレンダー ({period})",
+                    f"**{ctx.author.display_name}** のカレンダー ({period})",
                     file=discord.File(fp=buf, filename='calendar.png'))
         except Exception as e:
             await ctx.send(f"エラーが発生しました: {e}")
@@ -84,7 +84,7 @@ class CalendarCog(commands.Cog, name='Calendar'):
 
             if not sessions:
                 await ctx.send(embed=discord.Embed(
-                    title="📅 プレイ記録なし",
+                    title="プレイ記録なし",
                     description=f"{user.display_name} さんの {period} のプレイ記録が見つかりませんでした。",
                     color=discord.Color.orange()))
                 return
@@ -94,7 +94,7 @@ class CalendarCog(commands.Cog, name='Calendar'):
                 img.save(buf, 'PNG')
                 buf.seek(0)
                 await ctx.send(
-                    f"🎮 **{user.display_name}** のカレンダー ({period}) [デバッグ]",
+                    f"**{user.display_name}** のカレンダー ({period}) [デバッグ]",
                     file=discord.File(fp=buf, filename='calendar.png'))
         except Exception as e:
             await ctx.send(f"エラーが発生しました: {e}")
@@ -201,7 +201,7 @@ class CalendarCog(commands.Cog, name='Calendar'):
         # ヘッダー
         period = (f"{week_start.strftime('%Y/%m/%d')}（月）〜 "
                   f"{week_end.strftime('%Y/%m/%d')}（日）")
-        draw.text((L['time_col_w'], 20), "🎮 Gaming Activity", T['accent'], font=title_f)
+        draw.text((L['time_col_w'], 20), "Gaming Activity", T['accent'], font=title_f)
         draw.text((L['time_col_w'], 75), period, T['subtext'], font=small_f)
 
         # 曜日ヘッダー
@@ -336,7 +336,7 @@ class CalendarCog(commands.Cog, name='Calendar'):
                 img.save(buf, 'PNG')
                 buf.seek(0)
                 await ctx.send(
-                    f"🎮 **{ctx.author.display_name}** のカレンダー [ダミーデータ] ({period})",
+                    f"**{ctx.author.display_name}** のカレンダー [ダミーデータ] ({period})",
                     file=discord.File(fp=buf, filename='calendar.png'))
         except Exception as e:
             await ctx.send(f"エラーが発生しました: {e}")
